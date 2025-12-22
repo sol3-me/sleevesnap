@@ -1,0 +1,7 @@
+{
+  "name": "sleevesnap",
+  "description": "A smart vinyl collection manager powered by AI. Snap a photo of your records to instantly catalog them.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
