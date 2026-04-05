@@ -111,7 +111,7 @@ scanRouter.post('/', async (req, res) => {
     res.json(results);
   } catch (err) {
     console.error('[scan] Error calling vision model:', err);
-    res.status(502).json({ error: 'Failed to analyse image' });
+    res.status(502).json({ error: 'Failed to analyze image' });
   }
 });
 
