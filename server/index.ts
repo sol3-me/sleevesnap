@@ -30,7 +30,7 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' },
 });
 
-// Strict limiter for AI-backed endpoints (each request hits Gemini)
+// Strict limiter for AI-backed scan endpoint (each request calls the vision model)
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,

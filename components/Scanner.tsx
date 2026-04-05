@@ -1,5 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { identifyVinylsFromImage } from '../services/geminiService';
+import { identifyVinylsFromImage } from '../services/vinylService';
 import { VinylRecord, ScanResult } from '../types';
 
 interface ScannerProps {

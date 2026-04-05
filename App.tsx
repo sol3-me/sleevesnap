@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { VinylRecord, ViewState, UserProfile } from './types';
 import { getCollection, addRecord, removeRecord, getUser, loginUser, logoutUser } from './services/storageService';
-import { searchVinylDatabase } from './services/geminiService';
+import { searchVinylDatabase } from './services/vinylService';
 import { VinylCard } from './components/VinylCard';
 import { Scanner } from './components/Scanner';
 
