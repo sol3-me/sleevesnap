@@ -2,6 +2,12 @@ import { Router, type Request, type Response } from 'express';
 import { db } from '../db.js';
 import type { BlobStorageProvider } from '../storage/BlobStorageProvider.js';
 
+/**
+ * Creates the covers API router.
+ *
+ * @param storage - The BlobStorageProvider used to persist downloaded cover art
+ *                  and make it available via a public URL.
+ */
 export function createCoversRouter(storage: BlobStorageProvider): Router {
   const router = Router();
 

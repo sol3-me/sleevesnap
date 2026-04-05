@@ -29,13 +29,19 @@ export class S3Provider implements BlobStorageProvider {
     const endpoint = process.env.S3_ENDPOINT;
     this.bucket = process.env.S3_BUCKET ?? 'sleevesnap-covers';
 
+    const accessKeyId = process.env.S3_ACCESS_KEY;
+    const secretAccessKey = process.env.S3_SECRET_KEY;
+
+    if (!accessKeyId || !secretAccessKey) {
+      throw new Error(
+        '[S3Provider] S3_ACCESS_KEY and S3_SECRET_KEY must be set when STORAGE_PROVIDER=s3',
+      );
+    }
+
     this.client = new S3Client({
       region: process.env.S3_REGION ?? 'us-east-1',
       ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
-      credentials: {
-        accessKeyId: process.env.S3_ACCESS_KEY ?? '',
-        secretAccessKey: process.env.S3_SECRET_KEY ?? '',
-      },
+      credentials: { accessKeyId, secretAccessKey },
     });
 
     // Public URL for objects: use explicit override, endpoint, or AWS style

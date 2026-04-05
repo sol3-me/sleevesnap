@@ -147,6 +147,10 @@ services:
       /bin/sh -c "
         mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin};
         mc mb --ignore-existing local/$${S3_BUCKET:-sleevesnap-covers};
+        # Cover art images are non-sensitive public assets; anonymous read allows
+        # the frontend to load images directly without pre-signed URL overhead.
+        # If your deployment requires private storage, remove this line and serve
+        # images via a signed-URL proxy instead.
         mc anonymous set download local/$${S3_BUCKET:-sleevesnap-covers};
         echo 'Bucket ready.';
       "
