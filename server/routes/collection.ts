@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../db.js';
+import { isSafeExternalUrl } from '../urlUtils.js';
 
 export const collectionRouter = Router();
 
@@ -82,6 +83,10 @@ collectionRouter.delete('/:id', (req, res) => {
  * Errors are swallowed so this never crashes the server.
  */
 async function computeAndStorePHash(id: string, coverUrl: string): Promise<void> {
+  if (!isSafeExternalUrl(coverUrl)) {
+    console.warn('[collection] Skipping pHash: unsafe URL rejected');
+    return;
+  }
   try {
     const res = await fetch(coverUrl, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return;
@@ -90,6 +95,6 @@ async function computeAndStorePHash(id: string, coverUrl: string): Promise<void>
     const hash = await computeHash(buf);
     db.prepare('UPDATE collection SET phash = ? WHERE id = ?').run(hash, id);
   } catch (err) {
-    console.warn(`[collection] Could not compute pHash for record ${id}:`, err);
+    console.warn('[collection] Could not compute pHash:', err);
   }
 }

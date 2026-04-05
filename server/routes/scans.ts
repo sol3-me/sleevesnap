@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { db } from '../db.js';
 import { computeHash } from '../imageHash.js';
+import { isSafeExternalUrl } from '../urlUtils.js';
 import type { BlobStorageProvider } from '../storage/BlobStorageProvider.js';
 
 interface CollectionRow {
@@ -86,7 +87,9 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
 
     const id = randomUUID();
     const dateAdded = Date.now();
-    let coverUrl: string | null = providedCoverUrl ?? null;
+    // Only accept the coverUrl if it points to a safe external host
+    let coverUrl: string | null =
+      providedCoverUrl && isSafeExternalUrl(providedCoverUrl) ? providedCoverUrl : null;
     let phash: string | null = null;
 
     // If the user provided a captured photo, store it and use it as the cover
@@ -149,6 +152,10 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
  * Errors are swallowed so this can be used in fire-and-forget mode.
  */
 async function fetchAndHash(url: string, recordId: string): Promise<string | null> {
+  if (!isSafeExternalUrl(url)) {
+    console.warn('[scans] fetchAndHash skipped: unsafe URL rejected');
+    return null;
+  }
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return null;
@@ -156,7 +163,7 @@ async function fetchAndHash(url: string, recordId: string): Promise<string | nul
     const { computeHash } = await import('../imageHash.js');
     return await computeHash(buf);
   } catch (err) {
-    console.warn(`[scans] fetchAndHash failed for record ${recordId}:`, err);
+    console.warn('[scans] fetchAndHash failed for record', recordId, err);
     return null;
   }
 }
