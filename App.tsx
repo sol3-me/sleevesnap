@@ -262,13 +262,12 @@ export default function App() {
 
         {/* Dynamic View */}
         {view === ViewState.SCANNER ? (
-          <Scanner 
-            onCancel={() => setView(ViewState.DASHBOARD)} 
-            onScanComplete={async (records) => {
-              await Promise.all(records.map(r => addRecord(r)));
+          <Scanner
+            onCancel={() => setView(ViewState.DASHBOARD)}
+            onScanComplete={async (record) => {
               setCollection(await getCollection());
               setView(ViewState.DASHBOARD);
-              showNotification(`Added ${records.length} records!`);
+              showNotification(`Added "${record.title}" to collection!`);
             }}
           />
         ) : view === ViewState.SEARCH ? (

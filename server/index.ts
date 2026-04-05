@@ -8,6 +8,7 @@ import { collectionRouter } from './routes/collection.js';
 import { scanRouter } from './routes/scan.js';
 import { searchRouter } from './routes/search.js';
 import { createCoversRouter } from './routes/covers.js';
+import { createScansRouter } from './routes/scans.js';
 import { createStorageProvider } from './storage/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,10 +31,10 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' },
 });
 
-// Strict limiter for AI-backed scan endpoint (each request calls the vision model)
-const aiLimiter = rateLimit({
+// Strict limiter for the scan endpoint (image hashing is CPU-bound)
+const scanLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' },
@@ -53,8 +54,9 @@ if ((process.env.STORAGE_PROVIDER ?? 'local') === 'local') {
 
 // API routes
 app.use('/api/collection', apiLimiter, collectionRouter);
-app.use('/api/scan', aiLimiter, scanRouter);
-app.use('/api/search', aiLimiter, searchRouter);
+app.use('/api/scan', scanLimiter, scanRouter);
+app.use('/api/scans', apiLimiter, createScansRouter(storage));
+app.use('/api/search', apiLimiter, searchRouter);
 app.use('/api/covers', apiLimiter, createCoversRouter(storage));
 
 // Health check

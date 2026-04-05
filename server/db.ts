@@ -37,5 +37,12 @@ export function initDb(): void {
     );
   `);
 
+  // Incremental migration: add phash column if it doesn't exist yet
+  const cols = db.pragma('table_info(collection)') as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'phash')) {
+    db.exec('ALTER TABLE collection ADD COLUMN phash TEXT');
+    console.log('[db] Added phash column to collection');
+  }
+
   console.log('[db] Database initialised at', DB_PATH);
 }
