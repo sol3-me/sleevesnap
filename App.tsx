@@ -27,7 +27,7 @@ export default function App() {
     const existingUser = getUser();
     if (existingUser) {
       setUser(existingUser);
-      setCollection(getCollection());
+      getCollection().then(setCollection);
       setView(ViewState.DASHBOARD);
     }
   }, []);
@@ -35,6 +35,7 @@ export default function App() {
   const handleLogin = (name: string) => {
     const newUser = loginUser(name);
     setUser(newUser);
+    getCollection().then(setCollection);
     setView(ViewState.DASHBOARD);
     showNotification(`Welcome back, ${name}!`);
   };
@@ -51,10 +52,10 @@ export default function App() {
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const handleAddToCollection = (record: VinylRecord) => {
-    const success = addRecord(record);
+  const handleAddToCollection = async (record: VinylRecord) => {
+    const success = await addRecord(record);
     if (success) {
-      setCollection(getCollection());
+      setCollection(await getCollection());
       showNotification(`Added "${record.title}" to collection`);
       // If we were searching, stay there, if scanning, go to dashboard
       if (view === ViewState.SCANNER) setView(ViewState.DASHBOARD);
@@ -63,9 +64,9 @@ export default function App() {
     }
   };
 
-  const handleRemoveFromCollection = (id: string) => {
-    removeRecord(id);
-    setCollection(getCollection());
+  const handleRemoveFromCollection = async (id: string) => {
+    await removeRecord(id);
+    setCollection(await getCollection());
     showNotification("Record removed");
   };
 
@@ -263,9 +264,9 @@ export default function App() {
         {view === ViewState.SCANNER ? (
           <Scanner 
             onCancel={() => setView(ViewState.DASHBOARD)} 
-            onScanComplete={(records) => {
-              records.forEach(r => addRecord(r));
-              setCollection(getCollection());
+            onScanComplete={async (records) => {
+              await Promise.all(records.map(r => addRecord(r)));
+              setCollection(await getCollection());
               setView(ViewState.DASHBOARD);
               showNotification(`Added ${records.length} records!`);
             }}
