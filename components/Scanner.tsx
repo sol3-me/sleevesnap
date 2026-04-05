@@ -1,44 +1,58 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { identifyVinylsFromImage } from '../services/geminiService';
-import { VinylRecord, ScanResult } from '../types';
+import { scanImage, searchVinylDatabase, submitScan } from '../services/vinylService';
+import { VinylRecord } from '../types';
 
 interface ScannerProps {
-  onScanComplete: (records: VinylRecord[]) => void;
+  onScanComplete: (record: VinylRecord) => void;
   onCancel: () => void;
 }
+
+type Stage =
+  | 'capture'           // camera / file-upload view
+  | 'analyzing'         // waiting for /api/scan response
+  | 'match_found'       // collection match returned; awaiting user confirmation
+  | 'no_match'          // no match; show manual search box
+  | 'searching'         // waiting for /api/search response
+  | 'search_results'    // search results ready; user picks one
+  | 'saving';           // saving confirmed result to collection
 
 export const Scanner: React.FC<ScannerProps> = ({ onScanComplete, onCancel }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [detectedRecords, setDetectedRecords] = useState<ScanResult[]>([]);
-  const [capturedImage, setCapturedImage] = useState<string | null>(null);
 
-  // Start Camera
+  const [stage, setStage] = useState<Stage>('capture');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);  // base64
+  const [error, setError] = useState<string | null>(null);
+
+  // match_found state
+  const [matchedRecord, setMatchedRecord] = useState<VinylRecord | null>(null);
+
+  // search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<VinylRecord[]>([]);
+
+  // ── Camera helpers ──────────────────────────────────────────────────────────
+
   const startCamera = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         setIsStreaming(true);
       }
-    } catch (err) {
-      console.error("Camera error:", err);
-      setError("Unable to access camera. Please try uploading a file.");
+    } catch {
+      setError('Unable to access camera. Please try uploading a file.');
     }
   }, []);
 
-  // Stop Camera
   const stopCamera = useCallback(() => {
-    if (videoRef.current && videoRef.current.srcObject) {
+    if (videoRef.current?.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach((t) => t.stop());
       videoRef.current.srcObject = null;
       setIsStreaming(false);
     }
@@ -49,207 +63,326 @@ export const Scanner: React.FC<ScannerProps> = ({ onScanComplete, onCancel }) =>
     return () => stopCamera();
   }, [startCamera, stopCamera]);
 
-  const handleCapture = useCallback(() => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      
-      // Set canvas dimensions to match video
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        setCapturedImage(dataUrl);
-        stopCamera();
-        analyzeImage(dataUrl.split(',')[1]); // Remove data:image/jpeg;base64, prefix
-      }
-    }
+  // ── Image capture ───────────────────────────────────────────────────────────
+
+  const captureFromCamera = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    stopCamera();
+    processImage(dataUrl);
   }, [stopCamera]);
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        setCapturedImage(result);
-        stopCamera();
-        analyzeImage(result.split(',')[1]);
-      };
-      reader.readAsDataURL(file);
-    }
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      stopCamera();
+      processImage(dataUrl);
+    };
+    reader.readAsDataURL(file);
   };
 
-  const analyzeImage = async (base64Data: string) => {
-    setIsAnalyzing(true);
+  /** Extract bare base64 from a data-URL and kick off the scan */
+  const processImage = (dataUrl: string) => {
+    const base64 = dataUrl.split(',')[1] ?? dataUrl;
+    setCapturedImage(base64);
+    analyzeImage(base64);
+  };
+
+  // ── Scan (pHash matching) ───────────────────────────────────────────────────
+
+  const analyzeImage = async (base64: string) => {
     setError(null);
+    setStage('analyzing');
     try {
-      const results = await identifyVinylsFromImage(base64Data);
-      if (results.length === 0) {
-        setError("No vinyl records could be clearly identified. Try again?");
+      const result = await scanImage(base64);
+      if (result.matched) {
+        setMatchedRecord(result.record);
+        setStage('match_found');
+      } else {
+        setStage('no_match');
       }
-      setDetectedRecords(results);
     } catch (err) {
-      setError("Failed to analyze image. Please check your connection.");
-    } finally {
-      setIsAnalyzing(false);
+      setError(err instanceof Error ? err.message : 'Failed to analyse image.');
+      setStage('no_match');
     }
   };
 
-  const handleConfirm = () => {
-    // Convert ScanResults to VinylRecords
-    const newRecords: VinylRecord[] = detectedRecords.map((scan, idx) => ({
-      id: `scan-${Date.now()}-${idx}`,
-      artist: scan.artist,
-      title: scan.title,
-      year: scan.year,
-      genre: scan.genre,
-      // Use the captured image for the first record, or a placeholder if multiple
-      coverUrl: capturedImage || undefined, 
-      dateAdded: Date.now(),
-      notes: `Identified via AI with ${(scan.confidence * 100).toFixed(0)}% confidence.`
-    }));
-    
-    onScanComplete(newRecords);
+  // ── Manual search ───────────────────────────────────────────────────────────
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    setError(null);
+    setStage('searching');
+    try {
+      const results = await searchVinylDatabase(searchQuery);
+      setSearchResults(results);
+      setStage('search_results');
+    } catch {
+      setError('Search failed. Please try again.');
+      setStage('no_match');
+    }
   };
+
+  // ── Confirm & save ──────────────────────────────────────────────────────────
+
+  const confirmSelection = async (record: VinylRecord) => {
+    setError(null);
+    setStage('saving');
+    try {
+      const saved = await submitScan({
+        artist: record.artist,
+        title: record.title,
+        year: record.year,
+        genre: record.genre,
+        notes: record.notes,
+        capturedImage: capturedImage ?? undefined,
+        coverUrl: record.coverUrl,
+      });
+      onScanComplete(saved);
+    } catch (err) {
+      // 409 = already in collection; treat as success
+      if (err instanceof Error && err.message.includes('already in collection')) {
+        onScanComplete(record);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to save record.');
+        setStage('search_results');
+      }
+    }
+  };
+
+  // ── Reset ───────────────────────────────────────────────────────────────────
+
+  const reset = () => {
+    setCapturedImage(null);
+    setMatchedRecord(null);
+    setSearchQuery('');
+    setSearchResults([]);
+    setError(null);
+    setStage('capture');
+    startCamera();
+  };
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-full bg-black text-white p-4">
       {/* Header */}
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold text-vinyl-accent">Scan Vinyl</h2>
-        <button onClick={onCancel} className="text-gray-400 hover:text-white">Close</button>
+        <button onClick={onCancel} className="text-gray-400 hover:text-white">
+          Close
+        </button>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden rounded-lg bg-gray-900 border border-vinyl-700">
-        
-        {/* Video View */}
-        {!capturedImage && !error && (
-          <video 
-            ref={videoRef} 
-            autoPlay 
-            playsInline 
-            muted 
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-        )}
+      {/* ── Viewfinder (capture / analyzing) ── */}
+      {(stage === 'capture' || stage === 'analyzing') && (
+        <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden rounded-lg bg-gray-900 border border-vinyl-700">
+          {/* Live video */}
+          {stage === 'capture' && !capturedImage && (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          )}
 
-        {/* Captured Image View */}
-        {capturedImage && (
-          <img 
-            src={capturedImage} 
-            alt="Captured" 
-            className="absolute inset-0 w-full h-full object-contain bg-black" 
-          />
-        )}
+          {/* Captured still */}
+          {capturedImage && (
+            <img
+              src={`data:image/jpeg;base64,${capturedImage}`}
+              alt="Captured"
+              className="absolute inset-0 w-full h-full object-contain bg-black"
+            />
+          )}
 
-        {/* Hidden Canvas for capture */}
-        <canvas ref={canvasRef} className="hidden" />
+          <canvas ref={canvasRef} className="hidden" />
 
-        {/* Overlay UI */}
-        <div className="absolute inset-0 flex flex-col justify-end p-6 pointer-events-none">
-          
-          {/* Scanning Animation */}
-          {isAnalyzing && (
-            <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-10 pointer-events-auto">
-              <div className="w-16 h-16 border-4 border-vinyl-accent border-t-transparent rounded-full animate-spin mb-4"></div>
-              <p className="text-lg font-bold animate-pulse">Analyzing Grooves...</p>
+          {/* Analysing overlay */}
+          {stage === 'analyzing' && (
+            <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-10">
+              <div className="w-16 h-16 border-4 border-vinyl-accent border-t-transparent rounded-full animate-spin mb-4" />
+              <p className="text-lg font-bold animate-pulse">Matching sleeve…</p>
             </div>
           )}
 
-          {/* Controls (Only visible when not analyzing) */}
-          {!isAnalyzing && !detectedRecords.length && (
-            <div className="w-full flex flex-col gap-4 pointer-events-auto items-center">
+          {/* Camera controls */}
+          {stage === 'capture' && (
+            <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-4 pointer-events-none">
               {error && (
-                <div className="bg-red-900/80 text-white p-3 rounded mb-2 text-center w-full">
+                <div className="bg-red-900/80 text-white p-3 rounded text-center mx-4 pointer-events-auto">
                   {error}
                 </div>
               )}
-              
-              {!capturedImage ? (
-                <div className="flex gap-4 w-full justify-center items-center">
-                   {/* File Upload Button */}
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-4 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30 transition-all"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  </button>
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                    onChange={handleFileUpload} 
-                  />
-
-                  {/* Capture Button */}
-                  <button 
-                    onClick={handleCapture}
-                    className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-vinyl-accent/20 hover:bg-vinyl-accent/40 transition-all active:scale-95"
-                  >
-                    <div className="w-16 h-16 bg-white rounded-full"></div>
-                  </button>
-
-                  <div className="w-12"></div> {/* Spacer for balance */}
-                </div>
-              ) : (
-                <button 
-                  onClick={() => {
-                    setCapturedImage(null);
-                    setDetectedRecords([]);
-                    setError(null);
-                    startCamera();
-                  }}
-                  className="bg-white text-black px-6 py-3 rounded-full font-bold shadow-lg"
+              <div className="flex gap-4 items-center pointer-events-auto">
+                {/* Upload */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-4 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30 transition-all"
+                  aria-label="Upload image"
                 >
-                  Retake
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 </button>
-              )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={fileInputRef}
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+
+                {/* Shutter */}
+                <button
+                  onClick={captureFromCamera}
+                  disabled={!isStreaming}
+                  className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-vinyl-accent/20 hover:bg-vinyl-accent/40 transition-all active:scale-95 disabled:opacity-40"
+                  aria-label="Capture"
+                >
+                  <div className="w-16 h-16 bg-white rounded-full" />
+                </button>
+
+                <div className="w-12" />
+              </div>
             </div>
           )}
         </div>
-      </div>
+      )}
 
-      {/* Results Panel */}
-      {detectedRecords.length > 0 && !isAnalyzing && (
-        <div className="mt-4 p-4 bg-vinyl-800 rounded-lg max-h-64 overflow-y-auto">
-          <h3 className="text-vinyl-accent font-bold mb-2">Found {detectedRecords.length} Items:</h3>
-          <div className="space-y-2">
-            {detectedRecords.map((rec, i) => (
-              <div key={i} className="flex justify-between items-center p-2 bg-vinyl-900 rounded border border-vinyl-700">
-                <div>
-                  <div className="font-bold">{rec.title}</div>
-                  <div className="text-sm text-gray-400">{rec.artist}</div>
+      {/* ── Match found ── */}
+      {stage === 'match_found' && matchedRecord && (
+        <div className="flex-1 flex flex-col gap-4">
+          <div className="bg-green-900/40 border border-green-700 rounded-lg p-4">
+            <p className="text-green-400 font-semibold mb-1">Found in your collection!</p>
+            <p className="text-white font-bold text-lg">{matchedRecord.title}</p>
+            <p className="text-gray-400">{matchedRecord.artist}</p>
+            {matchedRecord.year && <p className="text-gray-500 text-sm">{matchedRecord.year}</p>}
+          </div>
+
+          {capturedImage && (
+            <img
+              src={`data:image/jpeg;base64,${capturedImage}`}
+              alt="Captured sleeve"
+              className="w-full max-h-48 object-contain rounded-lg bg-gray-900"
+            />
+          )}
+
+          {error && (
+            <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>
+          )}
+
+          <div className="flex gap-2 mt-auto">
+            <button
+              onClick={() => setStage('no_match')}
+              className="flex-1 py-3 rounded border border-gray-600 text-gray-300 hover:bg-white/5"
+            >
+              Not quite — search
+            </button>
+            <button
+              onClick={() => onScanComplete(matchedRecord)}
+              className="flex-1 py-3 rounded bg-vinyl-accent text-white font-bold hover:bg-red-500"
+            >
+              That's it!
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── No match / manual search ── */}
+      {(stage === 'no_match' || stage === 'searching' || stage === 'search_results') && (
+        <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+          {/* Thumbnail of the captured image */}
+          {capturedImage && (
+            <img
+              src={`data:image/jpeg;base64,${capturedImage}`}
+              alt="Captured sleeve"
+              className="w-full max-h-36 object-contain rounded-lg bg-gray-900"
+            />
+          )}
+
+          <p className="text-gray-300 text-sm">
+            Couldn't identify this record in your collection. Do you know what album it is?
+          </p>
+
+          {error && (
+            <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>
+          )}
+
+          {/* Search box */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="Search artist or album title…"
+              className="flex-1 bg-vinyl-800 text-white border border-vinyl-700 rounded-lg p-3 focus:ring-1 focus:ring-vinyl-accent focus:outline-none text-sm"
+              autoFocus
+            />
+            <button
+              onClick={handleSearch}
+              disabled={stage === 'searching' || !searchQuery.trim()}
+              className="bg-vinyl-700 hover:bg-vinyl-600 text-white px-4 rounded-lg font-medium disabled:opacity-50"
+            >
+              {stage === 'searching' ? '…' : 'Search'}
+            </button>
+          </div>
+
+          {/* Search results */}
+          <div className="flex-1 overflow-y-auto space-y-2">
+            {searchResults.map((record) => (
+              <div
+                key={record.id}
+                className="flex items-center gap-3 bg-vinyl-800 rounded-lg p-3 border border-vinyl-700"
+              >
+                {record.coverUrl && (
+                  <img
+                    src={record.coverUrl}
+                    alt={record.title}
+                    className="w-12 h-12 object-cover rounded flex-shrink-0 bg-gray-700"
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-white truncate">{record.title}</p>
+                  <p className="text-sm text-gray-400 truncate">{record.artist}</p>
+                  {record.year && <p className="text-xs text-gray-500">{record.year}</p>}
                 </div>
-                <div className="text-xs px-2 py-1 bg-green-900 text-green-300 rounded">
-                  {(rec.confidence * 100).toFixed(0)}%
-                </div>
+                <button
+                  onClick={() => confirmSelection(record)}
+                  disabled={stage === 'saving'}
+                  className="flex-shrink-0 text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-2 rounded transition-colors disabled:opacity-50"
+                >
+                  {stage === 'saving' ? '…' : 'This is it'}
+                </button>
               </div>
             ))}
+
+            {stage === 'search_results' && searchResults.length === 0 && (
+              <p className="text-center text-gray-500 py-6">No results found. Try a different query.</p>
+            )}
           </div>
-          <div className="flex gap-2 mt-4">
-            <button 
-              onClick={() => {
-                setCapturedImage(null);
-                setDetectedRecords([]);
-                startCamera();
-              }}
-              className="flex-1 py-2 rounded border border-gray-600 text-gray-300 hover:bg-white/5"
-            >
-              Cancel
-            </button>
-            <button 
-              onClick={handleConfirm}
-              className="flex-1 py-2 rounded bg-vinyl-accent text-white font-bold hover:bg-red-500"
-            >
-              Add All
-            </button>
-          </div>
+
+          <button onClick={reset} className="mt-2 text-sm text-gray-500 hover:text-gray-300 text-center">
+            ← Scan again
+          </button>
+        </div>
+      )}
+
+      {/* Saving overlay */}
+      {stage === 'saving' && (
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          <div className="w-12 h-12 border-4 border-vinyl-accent border-t-transparent rounded-full animate-spin" />
+          <p className="text-gray-400">Saving to collection…</p>
         </div>
       )}
     </div>

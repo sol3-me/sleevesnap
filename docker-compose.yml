@@ -1,0 +1,157 @@
+# sleevesnap – docker-compose
+#
+# Profiles
+# ─────────
+#   (none / default)  app + MinIO  → recommended self-hosted setup
+#   simple            app only, local filesystem storage  (single container)
+#   external-s3       app only, points to AWS S3 / Cloudflare R2 via env vars
+#
+# Quick start (recommended):
+#   cp .env.example .env
+#   docker compose up -d
+#
+# Minimal single-container:
+#   docker compose --profile simple up -d
+#
+# External S3 / R2:
+#   docker compose --profile external-s3 up -d
+
+services:
+
+  # ── App (default + simple + external-s3 profiles) ─────────────────────────
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      MUSICBRAINZ_APP_NAME: "${MUSICBRAINZ_APP_NAME:-sleevesnap}"
+      CACHE_DB_PATH: /data/cache.db
+
+      # Storage — overridden per profile below via env_file / environment
+      STORAGE_PROVIDER: "${STORAGE_PROVIDER:-s3}"
+      STORAGE_LOCAL_PATH: /data/covers
+      PUBLIC_URL: "${PUBLIC_URL:-http://localhost:3000}"
+
+      # S3 / MinIO
+      S3_ENDPOINT: "${S3_ENDPOINT:-http://minio:9000}"
+      S3_BUCKET: "${S3_BUCKET:-sleevesnap-covers}"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-minioadmin}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-minioadmin}"
+      S3_REGION: "${S3_REGION:-us-east-1}"
+      S3_PUBLIC_URL: "${S3_PUBLIC_URL:-}"
+
+      # Optional API integrations
+      DISCOGS_TOKEN: "${DISCOGS_TOKEN:-}"
+      LASTFM_API_KEY: "${LASTFM_API_KEY:-}"
+    volumes:
+      - sleevesnap_data:/data
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── App (simple profile – no MinIO, local filesystem only) ────────────────
+  app-simple:
+    build: .
+    profiles: [simple]
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      MUSICBRAINZ_APP_NAME: "${MUSICBRAINZ_APP_NAME:-sleevesnap}"
+      CACHE_DB_PATH: /data/cache.db
+      STORAGE_PROVIDER: local
+      STORAGE_LOCAL_PATH: /data/covers
+      PUBLIC_URL: "${PUBLIC_URL:-http://localhost:3000}"
+      DISCOGS_TOKEN: "${DISCOGS_TOKEN:-}"
+      LASTFM_API_KEY: "${LASTFM_API_KEY:-}"
+    volumes:
+      - sleevesnap_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── App (external-s3 profile – no MinIO, uses AWS S3 / R2) ───────────────
+  app-external-s3:
+    build: .
+    profiles: [external-s3]
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      MUSICBRAINZ_APP_NAME: "${MUSICBRAINZ_APP_NAME:-sleevesnap}"
+      CACHE_DB_PATH: /data/cache.db
+      STORAGE_PROVIDER: s3
+      S3_BUCKET: "${S3_BUCKET}"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY}"
+      S3_REGION: "${S3_REGION:-us-east-1}"
+      S3_PUBLIC_URL: "${S3_PUBLIC_URL:-}"
+      DISCOGS_TOKEN: "${DISCOGS_TOKEN:-}"
+      LASTFM_API_KEY: "${LASTFM_API_KEY:-}"
+    volumes:
+      - sleevesnap_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── MinIO (default profile only) ──────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${S3_ACCESS_KEY:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${S3_SECRET_KEY:-minioadmin}"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── MinIO bucket initialisation (default profile only) ───────────────────
+  # Creates the bucket on first run, then exits.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin};
+        mc mb --ignore-existing local/$${S3_BUCKET:-sleevesnap-covers};
+        # Cover art images are non-sensitive public assets; anonymous read allows
+        # the frontend to load images directly without pre-signed URL overhead.
+        # If your deployment requires private storage, remove this line and serve
+        # images via a signed-URL proxy instead.
+        mc anonymous set download local/$${S3_BUCKET:-sleevesnap-covers};
+        echo 'Bucket ready.';
+      "
+
+volumes:
+  sleevesnap_data:
+  minio_data:
