@@ -15,7 +15,7 @@ export class LocalFileSystemProvider implements BlobStorageProvider {
   private readonly publicBaseUrl: string;
 
   constructor() {
-    this.storagePath = process.env.STORAGE_LOCAL_PATH ?? '/data/covers';
+    this.storagePath = process.env.STORAGE_LOCAL_PATH ?? path.join(process.cwd(), 'data', 'covers');
     this.publicBaseUrl = (process.env.PUBLIC_URL ?? 'http://localhost:3001').replace(/\/$/, '');
     fs.mkdirSync(this.storagePath, { recursive: true });
   }
