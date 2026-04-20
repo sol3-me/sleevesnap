@@ -6,20 +6,22 @@
     <title>sleevesnap</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              vinyl: {
-                900: '#121212',
-                800: '#1e1e1e',
-                700: '#2d2d2d',
-                accent: '#ff6b6b',
-                muted: '#888888',
+      if (window.tailwind) {
+        window.tailwind.config = {
+          theme: {
+            extend: {
+              colors: {
+                vinyl: {
+                  900: '#121212',
+                  800: '#1e1e1e',
+                  700: '#2d2d2d',
+                  accent: '#ff6b6b',
+                  muted: '#888888',
+                }
+              },
+              animation: {
+                'spin-slow': 'spin 3s linear infinite',
               }
-            },
-            animation: {
-              'spin-slow': 'spin 3s linear infinite',
             }
           }
         }
@@ -53,5 +55,6 @@
 </head>
   <body class="bg-vinyl-900 text-white overflow-hidden">
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

@@ -48,7 +48,7 @@ const storage = createStorageProvider();
 
 // Serve locally stored cover art when using the filesystem provider
 if ((process.env.STORAGE_PROVIDER ?? 'local') === 'local') {
-  const coversPath = process.env.STORAGE_LOCAL_PATH ?? '/data/covers';
+  const coversPath = process.env.STORAGE_LOCAL_PATH ?? path.join(process.cwd(), 'data', 'covers');
   app.use('/covers', apiLimiter, express.static(coversPath));
 }
 
