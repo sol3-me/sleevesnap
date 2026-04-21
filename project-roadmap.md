@@ -36,8 +36,8 @@
 *   **Image Source: Cover Art Archive (Free)**
     *   Hosted by Internet Archive.
     *   Use for: High-res cover art URLs based on MusicBrainz IDs (MBID).
-*   **Search/Discovery: Gemini API (Free Tier)**
-    *   Use `gemini-3-flash-preview` for fuzzy search/recommendations (e.g., "Find me albums similar to Pink Floyd's generic psychedelic rock").
+*   **Search/Discovery: MusicBrainz API (Free)**
+*   Use MusicBrainz text search and metadata endpoints for recommendations and fuzzy matching.
 
 ## 4. The USP: Intelligent Multi-Vinyl Scanner
 **Goal:** Identify multiple records from a single camera frame or uploaded image.
@@ -49,15 +49,15 @@ We will utilize a **Hybrid AI Vision approach** to avoid training custom ML mode
     *   Use HTML5 `getUserMedia` for live camera feed.
     *   Allow upload for high-res photos.
 
-2.  **Detection & Recognition (Gemini 2.5 Flash):**
-    *   *Why:* It supports "multimodal" input (images + text prompt).
+2.  **Detection & Recognition (Vision Provider):**
+    *   *Why:* It supports multimodal image + text analysis for cover detection.
     *   *Process:*
-        1.  Send the image to Gemini.
+        1.  Send the image to the configured vision provider.
         2.  Prompt: *"Detect all vinyl record covers in this image. Return a JSON list containing 'Artist', 'Album Title', and 'Confidence'. Ignore background objects."*
-        3.  Gemini performs effectively both Object Detection (finding the square shapes) and OCR/Knowledge Retrieval (reading "Beatles" and recognizing the *Abbey Road* crossing).
+        3.  The provider performs object detection and text/knowledge extraction to identify likely records.
 
 3.  **Validation (MusicBrainz):**
-    *   Take the raw strings from Gemini (e.g., "Pink Floyd - Dark Side").
+    *   Take the raw strings from the vision response (e.g., "Pink Floyd - Dark Side").
     *   Query MusicBrainz API to get the canonical metadata (Year, Genre, MBID) and high-res cover art.
 
 4.  **Optimizations:**
@@ -75,5 +75,5 @@ We will utilize a **Hybrid AI Vision approach** to avoid training custom ML mode
 
 ## 6. Testing Strategy
 *   **Unit Tests (Vitest):** Test metadata parsing logic (MusicBrainz JSON to App Model).
-*   **Integration Tests:** Mock the Camera API and Gemini API to test the "Scan -> Identify -> Add" flow.
+*   **Integration Tests:** Mock the Camera API and vision provider API to test the "Scan -> Identify -> Add" flow.
 *   **E2E Tests:** Ensure the Auth flow and Offline syncing work as expected.

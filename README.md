@@ -2,16 +2,13 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# sleevesnap
 
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/1gJI9byEcRgWH1X7qGp9sC3gopqqdMh9n
+This repository contains the sleevesnap app and backend API.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
    `npm install`
@@ -19,3 +16,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1gJI9byEcRgWH1X7qGp9sC3
    `npm run dev:server`
 3. Start the frontend (terminal 2):
    `npm run dev`
+4. Run the backend API in another terminal:
+   `npm run dev:server`
+
+The frontend runs on port `3000` and proxies `/api` to the backend on port `3001`.
