@@ -16,7 +16,5 @@ This repository contains the sleevesnap app and backend API.
    `npm run dev:server`
 3. Start the frontend (terminal 2):
    `npm run dev`
-4. Run the backend API in another terminal:
-   `npm run dev:server`
 
 The frontend runs on port `3000` and proxies `/api` to the backend on port `3001`.
