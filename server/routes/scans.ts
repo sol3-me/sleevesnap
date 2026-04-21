@@ -1,9 +1,9 @@
-import { Router } from 'express';
 import { randomUUID } from 'crypto';
+import { Router } from 'express';
 import { db } from '../db.js';
 import { computeHash } from '../imageHash.js';
-import { isSafeExternalUrl } from '../urlUtils.js';
 import type { BlobStorageProvider } from '../storage/BlobStorageProvider.js';
+import { isSafeExternalUrl } from '../urlUtils.js';
 
 interface CollectionRow {
   id: string;

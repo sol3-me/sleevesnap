@@ -76,11 +76,11 @@ export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove }) => {
         )}
         {/* Vinyl Shine Effect */}
         <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent pointer-events-none"></div>
-        
+
         {/* Record Groove Texture Overlay (Subtle) */}
         <div className="absolute inset-0 rounded-full border-2 border-white/5 m-2 pointer-events-none opacity-50"></div>
       </div>
-      
+
       <div className="p-4">
         <h3 className="font-bold text-lg text-white truncate" title={record.title}>{record.title}</h3>
         <p className="text-vinyl-accent font-medium truncate">{record.artist}</p>

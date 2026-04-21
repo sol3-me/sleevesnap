@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SearchGroupReleases, SearchResultGroup, SearchResultPage, VinylRecord, ViewState, UserProfile } from './types';
-import { getCollection, addRecord, removeRecord, getUser, loginUser, logoutUser } from './services/storageService';
-import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vinylService';
-import { VinylCard } from './components/VinylCard';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Scanner } from './components/Scanner';
+import { VinylCard } from './components/VinylCard';
+import { addRecord, getCollection, getUser, loginUser, logoutUser, removeRecord } from './services/storageService';
+import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vinylService';
+import { SearchGroupReleases, SearchResultGroup, SearchResultPage, UserProfile, ViewState, VinylRecord } from './types';
 
 const SEARCH_PAGE_SIZE = 5;
 const SEARCH_FILTERS_KEY = 'sleevesnap:search-filters:v1';
@@ -341,20 +341,20 @@ export default function App() {
         </div>
         <h1 className="text-3xl font-bold text-center mb-2 text-white">sleevesnap</h1>
         <p className="text-center text-gray-400 mb-8">Digitize your vinyl collection with AI.</p>
-        
+
         <form onSubmit={(e) => {
           e.preventDefault();
           const fd = new FormData(e.currentTarget);
           handleLogin(fd.get('name') as string || 'Guest');
         }}>
-          <input 
+          <input
             name="name"
-            type="text" 
-            placeholder="Enter your name" 
+            type="text"
+            placeholder="Enter your name"
             className="w-full bg-vinyl-900 text-white border border-vinyl-700 rounded-lg p-3 mb-4 focus:ring-2 focus:ring-vinyl-accent focus:outline-none transition-all"
             required
           />
-          <button 
+          <button
             type="submit"
             className="w-full bg-vinyl-accent hover:bg-red-500 text-white font-bold py-3 rounded-lg transition-colors shadow-lg"
           >
@@ -386,7 +386,7 @@ export default function App() {
           />
           <span className="text-xs text-gray-500 w-10 text-right">{collectionCardSize}</span>
         </div>
-        <button 
+        <button
           onClick={() => setView(ViewState.SCANNER)}
           className="md:hidden bg-vinyl-accent text-white p-3 rounded-full shadow-lg"
         >
@@ -397,7 +397,7 @@ export default function App() {
       {collection.length === 0 ? (
         <div className="text-center py-20 bg-vinyl-800/50 rounded-xl border border-dashed border-vinyl-700">
           <p className="text-xl text-gray-400 mb-4">It's quiet in here...</p>
-          <button 
+          <button
             onClick={() => setView(ViewState.SEARCH)}
             className="text-vinyl-accent underline hover:text-white"
           >
@@ -411,9 +411,9 @@ export default function App() {
             isMobileLayout
               ? { gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(140px, 44vw, 190px), 1fr))' }
               : {
-                  gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
-                  justifyContent: 'flex-start',
-                }
+                gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
+                justifyContent: 'flex-start',
+              }
           }
         >
           {collection.map(record => (
@@ -668,7 +668,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-vinyl-900 text-white overflow-hidden">
-      
+
       {/* Sidebar (Desktop) */}
       <aside className="hidden md:flex flex-col w-64 bg-vinyl-800 border-r border-vinyl-700">
         <div className="p-6">
@@ -678,19 +678,19 @@ export default function App() {
           </h1>
         </div>
         <nav className="flex-1 px-4 space-y-2">
-          <button 
+          <button
             onClick={() => setView(ViewState.DASHBOARD)}
             className={`flex items-center gap-3 w-full p-3 rounded-lg transition-all ${view === ViewState.DASHBOARD ? 'bg-vinyl-accent text-white' : 'text-gray-400 hover:bg-vinyl-700'}`}
           >
             <Icons.Home /> Home
           </button>
-          <button 
+          <button
             onClick={() => setView(ViewState.SEARCH)}
             className={`flex items-center gap-3 w-full p-3 rounded-lg transition-all ${view === ViewState.SEARCH ? 'bg-vinyl-accent text-white' : 'text-gray-400 hover:bg-vinyl-700'}`}
           >
             <Icons.Search /> Search
           </button>
-           <button 
+          <button
             onClick={() => setView(ViewState.SCANNER)}
             className={`flex items-center gap-3 w-full p-3 rounded-lg transition-all ${view === ViewState.SCANNER ? 'bg-vinyl-accent text-white' : 'text-gray-400 hover:bg-vinyl-700'}`}
           >
@@ -699,11 +699,11 @@ export default function App() {
         </nav>
         <div className="p-4 border-t border-vinyl-700">
           <div className="flex items-center gap-3 mb-4">
-             <img src={user.avatarUrl} alt="Avatar" className="w-8 h-8 rounded-full bg-gray-600" />
-             <div className="flex-1 overflow-hidden">
-               <p className="text-sm font-bold truncate">{user.name}</p>
-               <p className="text-xs text-gray-500 truncate">{user.email}</p>
-             </div>
+            <img src={user.avatarUrl} alt="Avatar" className="w-8 h-8 rounded-full bg-gray-600" />
+            <div className="flex-1 overflow-hidden">
+              <p className="text-sm font-bold truncate">{user.name}</p>
+              <p className="text-xs text-gray-500 truncate">{user.email}</p>
+            </div>
           </div>
           <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-red-400 hover:text-red-300">
             <Icons.LogOut /> Sign Out
@@ -713,7 +713,7 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 relative overflow-y-auto h-full scroll-smooth">
-        
+
         {/* Mobile Header */}
         <header className="md:hidden flex justify-between items-center p-4 bg-vinyl-800/90 backdrop-blur-md sticky top-0 z-20 border-b border-vinyl-700">
           <h1 className="text-xl font-bold text-vinyl-accent">sleevesnap</h1>
