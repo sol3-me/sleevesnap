@@ -9,7 +9,19 @@ interface CollectionRow {
   artist: string;
   title: string;
   year: string | null;
+  release_date: string | null;
   genre: string | null;
+  format: string | null;
+  country: string | null;
+  release_status: string | null;
+  edition: string | null;
+  musicbrainz_id: string | null;
+  release_group_id: string | null;
+  release_group_title: string | null;
+  release_group_url: string | null;
+  release_url: string | null;
+  discogs_url: string | null;
+  thumbnail_url: string | null;
   cover_url: string | null;
   date_added: number;
   notes: string | null;
@@ -22,7 +34,19 @@ function rowToRecord(row: CollectionRow) {
     artist: row.artist,
     title: row.title,
     year: row.year ?? undefined,
+    releaseDate: row.release_date ?? undefined,
     genre: row.genre ?? undefined,
+    format: row.format ?? undefined,
+    country: row.country ?? undefined,
+    releaseStatus: row.release_status ?? undefined,
+    edition: row.edition ?? undefined,
+    musicBrainzId: row.musicbrainz_id ?? undefined,
+    releaseGroupId: row.release_group_id ?? undefined,
+    releaseGroupTitle: row.release_group_title ?? undefined,
+    releaseGroupUrl: row.release_group_url ?? undefined,
+    releaseUrl: row.release_url ?? undefined,
+    discogsUrl: row.discogs_url ?? undefined,
+    thumbnailUrl: row.thumbnail_url ?? undefined,
     coverUrl: row.cover_url ?? undefined,
     dateAdded: row.date_added,
     notes: row.notes ?? undefined,
@@ -39,7 +63,28 @@ collectionRouter.get('/', (_req, res) => {
 
 // POST /api/collection  – add a record (deduplicates by artist + title)
 collectionRouter.post('/', (req, res) => {
-  const { id, artist, title, year, genre, coverUrl, dateAdded, notes } = req.body;
+  const {
+    id,
+    artist,
+    title,
+    year,
+    releaseDate,
+    genre,
+    format,
+    country,
+    releaseStatus,
+    edition,
+    musicBrainzId,
+    releaseGroupId,
+    releaseGroupTitle,
+    releaseGroupUrl,
+    releaseUrl,
+    discogsUrl,
+    thumbnailUrl,
+    coverUrl,
+    dateAdded,
+    notes,
+  } = req.body;
 
   if (!id || !artist || !title) {
     res.status(400).json({ error: 'id, artist, and title are required' });
@@ -58,9 +103,50 @@ collectionRouter.post('/', (req, res) => {
   }
 
   db.prepare(
-    `INSERT INTO collection (id, artist, title, year, genre, cover_url, date_added, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, artist, title, year ?? null, genre ?? null, coverUrl ?? null, dateAdded ?? Date.now(), notes ?? null);
+    `INSERT INTO collection (
+      id,
+      artist,
+      title,
+      year,
+      release_date,
+      genre,
+      format,
+      country,
+      release_status,
+      edition,
+      musicbrainz_id,
+      release_group_id,
+      release_group_title,
+      release_group_url,
+      release_url,
+      discogs_url,
+      thumbnail_url,
+      cover_url,
+      date_added,
+      notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    artist,
+    title,
+    year ?? null,
+    releaseDate ?? null,
+    genre ?? null,
+    format ?? null,
+    country ?? null,
+    releaseStatus ?? null,
+    edition ?? null,
+    musicBrainzId ?? null,
+    releaseGroupId ?? null,
+    releaseGroupTitle ?? null,
+    releaseGroupUrl ?? null,
+    releaseUrl ?? null,
+    discogsUrl ?? null,
+    thumbnailUrl ?? null,
+    coverUrl ?? null,
+    dateAdded ?? Date.now(),
+    notes ?? null,
+  );
 
   // Fire-and-forget: compute and store a pHash for this cover so it can be
   // matched by future scans.  We do this after responding so it never blocks.

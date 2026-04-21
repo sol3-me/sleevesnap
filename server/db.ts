@@ -24,7 +24,19 @@ export function initDb(): void {
       artist      TEXT NOT NULL,
       title       TEXT NOT NULL,
       year        TEXT,
+      release_date TEXT,
       genre       TEXT,
+      format      TEXT,
+      country     TEXT,
+      release_status TEXT,
+      edition     TEXT,
+      musicbrainz_id TEXT,
+      release_group_id TEXT,
+      release_group_title TEXT,
+      release_group_url TEXT,
+      release_url TEXT,
+      discogs_url TEXT,
+      thumbnail_url TEXT,
       cover_url   TEXT,
       date_added  INTEGER NOT NULL,
       notes       TEXT
@@ -39,10 +51,26 @@ export function initDb(): void {
 
   // Incremental migration: add phash column if it doesn't exist yet
   const cols = db.pragma('table_info(collection)') as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === 'phash')) {
-    db.exec('ALTER TABLE collection ADD COLUMN phash TEXT');
-    console.log('[db] Added phash column to collection');
-  }
+  const addColumnIfMissing = (columnName: string, columnType: string) => {
+    if (!cols.some((c) => c.name === columnName)) {
+      db.exec(`ALTER TABLE collection ADD COLUMN ${columnName} ${columnType}`);
+      console.log(`[db] Added ${columnName} column to collection`);
+    }
+  };
+
+  addColumnIfMissing('phash', 'TEXT');
+  addColumnIfMissing('release_date', 'TEXT');
+  addColumnIfMissing('format', 'TEXT');
+  addColumnIfMissing('country', 'TEXT');
+  addColumnIfMissing('release_status', 'TEXT');
+  addColumnIfMissing('edition', 'TEXT');
+  addColumnIfMissing('musicbrainz_id', 'TEXT');
+  addColumnIfMissing('release_group_id', 'TEXT');
+  addColumnIfMissing('release_group_title', 'TEXT');
+  addColumnIfMissing('release_group_url', 'TEXT');
+  addColumnIfMissing('release_url', 'TEXT');
+  addColumnIfMissing('discogs_url', 'TEXT');
+  addColumnIfMissing('thumbnail_url', 'TEXT');
 
   console.log('[db] Database initialised at', DB_PATH);
 }

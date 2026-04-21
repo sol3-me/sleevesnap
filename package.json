@@ -7,6 +7,8 @@
     "dev": "vite",
     "dev:server": "tsx watch server/index.ts",
     "build": "vite build && tsc -p tsconfig.server.json",
+    "test": "npm run test:search",
+    "test:search": "tsx --test server/routes/search.test.ts",
     "preview": "vite preview",
     "start": "node dist-server/index.js"
   },

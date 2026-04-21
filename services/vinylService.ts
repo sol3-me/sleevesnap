@@ -1,4 +1,69 @@
-import { ScanResponse, ScanUploadPayload, VinylRecord } from '../types';
+import {
+  ScanResponse,
+  ScanUploadPayload,
+  SearchGroupReleases,
+  SearchResultPage,
+  VinylRecord,
+} from '../types';
+
+const CACHE_PREFIX = 'sleevesnap:search:v1:';
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
+
+function getCacheKey(key: string): string {
+  return `${CACHE_PREFIX}${key}`;
+}
+
+function getCached<T>(key: string): T | undefined {
+  const cacheKey = getCacheKey(key);
+  const now = Date.now();
+
+  const inMemory = memoryCache.get(cacheKey);
+  if (inMemory) {
+    if (inMemory.expiresAt > now) {
+      return inMemory.value as T;
+    }
+    memoryCache.delete(cacheKey);
+  }
+
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(cacheKey);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { expiresAt: number; value: T };
+    if (parsed.expiresAt <= now) {
+      window.localStorage.removeItem(cacheKey);
+      return undefined;
+    }
+    memoryCache.set(cacheKey, { expiresAt: parsed.expiresAt, value: parsed.value });
+    return parsed.value;
+  } catch {
+    return undefined;
+  }
+}
+
+function setCached<T>(key: string, value: T, ttl = CACHE_TTL_MS): void {
+  const cacheKey = getCacheKey(key);
+  const payload = {
+    expiresAt: Date.now() + ttl,
+    value,
+  };
+
+  memoryCache.set(cacheKey, payload);
+
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota errors.
+  }
+}
 
 /**
  * Sends a base64-encoded JPEG to the server-side scan endpoint, which
@@ -48,15 +113,83 @@ export const submitScan = async (payload: ScanUploadPayload): Promise<VinylRecor
  * Queries the server-side search endpoint, which uses MusicBrainz to find
  * vinyl records matching the given query string.
  */
-export const searchVinylDatabase = async (query: string): Promise<VinylRecord[]> => {
+export const searchVinylDatabase = async (
+  query: string,
+  includeOtherFormats = false,
+): Promise<VinylRecord[]> => {
   const res = await fetch('/api/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, includeOtherFormats }),
   });
 
   if (!res.ok) return [];
   return res.json();
+};
+
+/**
+ * Queries paginated release-group search results for Discover Vinyl.
+ */
+export const searchVinylReleaseGroups = async (
+  query: string,
+  page = 1,
+  pageSize = 8,
+  formats: Array<'vinyl' | 'cd'> = ['vinyl'],
+): Promise<SearchResultPage> => {
+  const normalizedFormats = Array.from(new Set(formats)).sort();
+  const cacheKey = `groups:${query.trim().toLowerCase()}:p${page}:s${pageSize}:f${normalizedFormats.join(',')}`;
+  const cached = getCached<SearchResultPage>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const res = await fetch('/api/search/groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, page, pageSize, formats: normalizedFormats }),
+  });
+
+  if (!res.ok) {
+    return {
+      query,
+      page,
+      pageSize,
+      total: 0,
+      hasMore: false,
+      isTotalExact: true,
+      groups: [],
+    };
+  }
+
+  const result = (await res.json()) as SearchResultPage;
+  setCached(cacheKey, result);
+  return result;
+};
+
+/**
+ * Gets all releases for a release group (cached), used when expanding groups.
+ */
+export const getReleaseGroupReleases = async (
+  releaseGroupId: string,
+): Promise<SearchGroupReleases> => {
+  const cacheKey = `group:${releaseGroupId}:releases`;
+  const cached = getCached<SearchGroupReleases>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const res = await fetch(`/api/search/groups/${encodeURIComponent(releaseGroupId)}/releases`);
+  if (!res.ok) {
+    return {
+      releaseGroupId,
+      availableFormats: [],
+      releases: [],
+    };
+  }
+
+  const result = (await res.json()) as SearchGroupReleases;
+  setCached(cacheKey, result);
+  return result;
 };
 
 // ---------------------------------------------------------------------------

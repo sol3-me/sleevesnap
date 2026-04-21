@@ -9,7 +9,19 @@ interface CollectionRow {
   artist: string;
   title: string;
   year: string | null;
+  release_date: string | null;
   genre: string | null;
+  format: string | null;
+  country: string | null;
+  release_status: string | null;
+  edition: string | null;
+  musicbrainz_id: string | null;
+  release_group_id: string | null;
+  release_group_title: string | null;
+  release_group_url: string | null;
+  release_url: string | null;
+  discogs_url: string | null;
+  thumbnail_url: string | null;
   cover_url: string | null;
   date_added: number;
   notes: string | null;
@@ -22,7 +34,19 @@ function rowToRecord(row: CollectionRow) {
     artist: row.artist,
     title: row.title,
     year: row.year ?? undefined,
+    releaseDate: row.release_date ?? undefined,
     genre: row.genre ?? undefined,
+    format: row.format ?? undefined,
+    country: row.country ?? undefined,
+    releaseStatus: row.release_status ?? undefined,
+    edition: row.edition ?? undefined,
+    musicBrainzId: row.musicbrainz_id ?? undefined,
+    releaseGroupId: row.release_group_id ?? undefined,
+    releaseGroupTitle: row.release_group_title ?? undefined,
+    releaseGroupUrl: row.release_group_url ?? undefined,
+    releaseUrl: row.release_url ?? undefined,
+    discogsUrl: row.discogs_url ?? undefined,
+    thumbnailUrl: row.thumbnail_url ?? undefined,
     coverUrl: row.cover_url ?? undefined,
     dateAdded: row.date_added,
     notes: row.notes ?? undefined,

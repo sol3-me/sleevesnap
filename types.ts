@@ -3,10 +3,58 @@ export interface VinylRecord {
   artist: string;
   title: string;
   year?: string;
+  releaseDate?: string;
   genre?: string;
+  format?: string;
+  country?: string;
+  releaseStatus?: string;
+  edition?: string;
+  musicBrainzId?: string;
+  releaseGroupId?: string;
+  releaseGroupTitle?: string;
+  releaseGroupUrl?: string;
+  releaseUrl?: string;
+  discogsUrl?: string;
+  thumbnailUrl?: string;
   coverUrl?: string; // URL or Base64
   dateAdded: number;
   notes?: string;
+}
+
+export interface SearchRelease extends VinylRecord {
+  releaseGroupId?: string;
+  releaseGroupTitle?: string;
+  releaseGroupUrl?: string;
+  releaseUrl?: string;
+}
+
+export interface SearchResultGroup {
+  releaseGroupId: string;
+  title: string;
+  artist: string;
+  firstReleaseDate?: string;
+  releaseGroupUrl: string;
+  thumbnailUrl?: string;
+  availableFormats: string[];
+  discogsMasterUrl?: string;
+  totalReleases: number;
+}
+
+export interface SearchResultPage {
+  query: string;
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+  isTotalExact: boolean;
+  groups: SearchResultGroup[];
+}
+
+export interface SearchGroupReleases {
+  releaseGroupId: string;
+  availableFormats: string[];
+  discogsMasterUrl?: string;
+  releases: SearchRelease[];
 }
 
 export enum ViewState {
@@ -41,7 +89,19 @@ export interface ScanUploadPayload {
   artist: string;
   title: string;
   year?: string;
+  releaseDate?: string;
   genre?: string;
+  format?: string;
+  country?: string;
+  releaseStatus?: string;
+  edition?: string;
+  musicBrainzId?: string;
+  releaseGroupId?: string;
+  releaseGroupTitle?: string;
+  releaseGroupUrl?: string;
+  releaseUrl?: string;
+  discogsUrl?: string;
+  thumbnailUrl?: string;
   notes?: string;
   /** Base64-encoded photo taken by the scanner (optional) */
   capturedImage?: string;

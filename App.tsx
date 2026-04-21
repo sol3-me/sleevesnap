@@ -1,9 +1,49 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { VinylRecord, ViewState, UserProfile } from './types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { SearchGroupReleases, SearchResultGroup, SearchResultPage, VinylRecord, ViewState, UserProfile } from './types';
 import { getCollection, addRecord, removeRecord, getUser, loginUser, logoutUser } from './services/storageService';
-import { searchVinylDatabase } from './services/vinylService';
+import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vinylService';
 import { VinylCard } from './components/VinylCard';
 import { Scanner } from './components/Scanner';
+
+const SEARCH_PAGE_SIZE = 5;
+const SEARCH_FILTERS_KEY = 'sleevesnap:search-filters:v1';
+const COLLECTION_CARD_SIZE_KEY = 'sleevesnap:collection-card-size:v1';
+const COLLECTION_CARD_SIZE_MIN = 180;
+const COLLECTION_CARD_SIZE_MAX = 360;
+const DEFAULT_COLLECTION_CARD_SIZE = 240;
+
+interface FormatFilters {
+  vinyl: boolean;
+  cd: boolean;
+}
+
+const defaultSearchPage: SearchResultPage = {
+  query: '',
+  page: 1,
+  pageSize: SEARCH_PAGE_SIZE,
+  total: 0,
+  hasMore: false,
+  isTotalExact: true,
+  groups: [],
+};
+
+function loadStoredFilters(): FormatFilters {
+  if (typeof window === 'undefined') {
+    return { vinyl: true, cd: false };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(SEARCH_FILTERS_KEY);
+    if (!raw) return { vinyl: true, cd: false };
+    const parsed = JSON.parse(raw) as Partial<FormatFilters>;
+    return {
+      vinyl: parsed.vinyl ?? true,
+      cd: parsed.cd ?? false,
+    };
+  } catch {
+    return { vinyl: true, cd: false };
+  }
+}
 
 // --- Reusable UI Icons ---
 const Icons = {
@@ -18,9 +58,27 @@ export default function App() {
   const [view, setView] = useState<ViewState>(ViewState.LOGIN);
   const [collection, setCollection] = useState<VinylRecord[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<VinylRecord[]>([]);
+  const [searchPage, setSearchPage] = useState<SearchResultPage>(defaultSearchPage);
+  const [groupReleases, setGroupReleases] = useState<Record<string, SearchGroupReleases>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [loadingGroupIds, setLoadingGroupIds] = useState<Record<string, true>>({});
+  const [formatFilters, setFormatFilters] = useState<FormatFilters>(() => loadStoredFilters());
+  const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
   const [isSearching, setIsSearching] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
+  const [collectionCardSize, setCollectionCardSize] = useState<number>(() => loadStoredCollectionCardSize());
+  const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false,
+  );
+  const releasesRef = useRef<Record<string, SearchGroupReleases>>({});
+  const loadingRef = useRef<Set<string>>(new Set());
+
+  const selectedSearchFormats = useMemo<Array<'vinyl' | 'cd'>>(() => {
+    const next: Array<'vinyl' | 'cd'> = [];
+    if (formatFilters.vinyl) next.push('vinyl');
+    if (formatFilters.cd) next.push('cd');
+    return next;
+  }, [formatFilters.cd, formatFilters.vinyl]);
 
   // Initialize
   useEffect(() => {
@@ -70,12 +128,205 @@ export default function App() {
     showNotification("Record removed");
   };
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(SEARCH_FILTERS_KEY, JSON.stringify(formatFilters));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [formatFilters]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(COLLECTION_CARD_SIZE_KEY, String(collectionCardSize));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [collectionCardSize]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const updateLayout = () => setIsMobileLayout(window.innerWidth < 768);
+    updateLayout();
+
+    window.addEventListener('resize', updateLayout);
+    return () => window.removeEventListener('resize', updateLayout);
+  }, []);
+
+  const handleSearch = async (page = 1, queryOverride?: string) => {
+    const queryToSearch = (queryOverride ?? searchQuery).trim();
+    if (!queryToSearch) return;
     setIsSearching(true);
-    const results = await searchVinylDatabase(searchQuery);
-    setSearchResults(results);
-    setIsSearching(false);
+
+    try {
+      const result = await searchVinylReleaseGroups(
+        queryToSearch,
+        page,
+        SEARCH_PAGE_SIZE,
+        selectedSearchFormats,
+      );
+      setSearchPage(result);
+      setGroupReleases({});
+      releasesRef.current = {};
+      loadingRef.current.clear();
+      setLoadingGroupIds({});
+      setExpandedGroups({});
+      setFailedCovers({});
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!searchPage.query) return;
+    void handleSearch(1, searchPage.query);
+  }, [formatFilters.cd, formatFilters.vinyl]);
+
+  const loadReleasesForGroup = useCallback(
+    async (releaseGroupId: string, silent = false) => {
+      if (releasesRef.current[releaseGroupId]) {
+        return releasesRef.current[releaseGroupId];
+      }
+      if (loadingRef.current.has(releaseGroupId)) {
+        return undefined;
+      }
+
+      loadingRef.current.add(releaseGroupId);
+      if (!silent) {
+        setLoadingGroupIds((prev) => ({ ...prev, [releaseGroupId]: true }));
+      }
+
+      try {
+        const result = await getReleaseGroupReleases(releaseGroupId);
+        setGroupReleases((prev) => {
+          if (prev[releaseGroupId]) return prev;
+          const next = { ...prev, [releaseGroupId]: result };
+          releasesRef.current = next;
+          return next;
+        });
+        return result;
+      } finally {
+        loadingRef.current.delete(releaseGroupId);
+        if (!silent) {
+          setLoadingGroupIds((prev) => {
+            const next = { ...prev };
+            delete next[releaseGroupId];
+            return next;
+          });
+        }
+      }
+    },
+    [],
+  );
+
+  const formatMatchesFilters = useCallback(
+    (format?: string) => {
+      const selectedAny = formatFilters.vinyl || formatFilters.cd;
+      if (!selectedAny) return false;
+
+      const formatLower = (format ?? '').toLowerCase();
+      const isVinyl = /vinyl|\blp\b/.test(formatLower);
+      const isCd = /\bcd\b/.test(formatLower);
+
+      return (
+        (formatFilters.vinyl && isVinyl) ||
+        (formatFilters.cd && isCd)
+      );
+    },
+    [formatFilters.cd, formatFilters.vinyl],
+  );
+
+  const filteredGroups = useMemo(() => searchPage.groups, [searchPage.groups]);
+
+  const totalPages = Math.max(1, Math.ceil(searchPage.total / searchPage.pageSize));
+
+  const getFilteredReleases = (group: SearchResultGroup) => {
+    const detail = groupReleases[group.releaseGroupId];
+    if (!detail) return [];
+    return detail.releases.filter((release) => formatMatchesFilters(release.format));
+  };
+
+  const toggleGroupExpanded = async (group: SearchResultGroup) => {
+    const isOpen = Boolean(expandedGroups[group.releaseGroupId]);
+    const nextOpen = !isOpen;
+
+    setExpandedGroups((prev) => ({
+      ...prev,
+      [group.releaseGroupId]: nextOpen,
+    }));
+
+    if (nextOpen) {
+      await loadReleasesForGroup(group.releaseGroupId);
+    }
+  };
+
+  const formatCountry = (countryCode?: string) => {
+    if (!countryCode) return undefined;
+    const specialRegions: Record<string, string> = {
+      XE: 'Europe',
+      XW: 'Worldwide',
+      XG: 'East Germany',
+    };
+
+    if (specialRegions[countryCode]) {
+      return `${specialRegions[countryCode]} (${countryCode})`;
+    }
+
+    try {
+      const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode);
+      if (name && name !== countryCode) {
+        return `${name} (${countryCode})`;
+      }
+    } catch {
+      // Ignore and fall through to the raw code.
+    }
+
+    return countryCode;
+  };
+
+  const getCoverFailureKey = (recordId: string, coverUrl: string) =>
+    `${recordId}::${coverUrl}`;
+
+  const handleCoverError = (recordId: string, coverUrl: string) => {
+    setFailedCovers((prev) => ({
+      ...prev,
+      [getCoverFailureKey(recordId, coverUrl)]: true,
+    }));
+  };
+
+  const renderCoverThumb = (
+    id: string,
+    title: string,
+    urlOrUrls?: string | Array<string | undefined>,
+    placeholderText = 'No cover',
+  ) => {
+    const candidateUrls = (Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls])
+      .map((url) => url?.trim())
+      .filter((url): url is string => Boolean(url))
+      .filter((url) => !failedCovers[getCoverFailureKey(id, url)]);
+
+    const activeUrl = candidateUrls[0];
+
+    if (activeUrl) {
+      return (
+        <img
+          src={activeUrl}
+          alt={title}
+          onError={() => handleCoverError(id, activeUrl)}
+          className="w-full h-full object-cover"
+        />
+      );
+    }
+
+    return (
+      <div className="w-full h-full bg-vinyl-700 text-gray-300 flex flex-col items-center justify-center text-[10px] leading-tight">
+        <span className="text-lg" aria-hidden="true">♪</span>
+        <span>{placeholderText}</span>
+      </div>
+    );
   };
 
   // --- Views ---
@@ -121,6 +372,20 @@ export default function App() {
           <h2 className="text-3xl font-bold text-white">Your Collection</h2>
           <p className="text-gray-400">{collection.length} Records</p>
         </div>
+        <div className="hidden md:flex items-center gap-3 px-3 py-2 rounded-lg border border-vinyl-700 bg-vinyl-800/70">
+          <span className="text-xs uppercase tracking-wide text-gray-400">Size</span>
+          <input
+            type="range"
+            min={COLLECTION_CARD_SIZE_MIN}
+            max={COLLECTION_CARD_SIZE_MAX}
+            step={10}
+            value={collectionCardSize}
+            onChange={(e) => setCollectionCardSize(clampCollectionCardSize(Number(e.target.value)))}
+            className="w-28 accent-vinyl-accent"
+            aria-label="Collection card size"
+          />
+          <span className="text-xs text-gray-500 w-10 text-right">{collectionCardSize}</span>
+        </div>
         <button 
           onClick={() => setView(ViewState.SCANNER)}
           className="md:hidden bg-vinyl-accent text-white p-3 rounded-full shadow-lg"
@@ -140,7 +405,17 @@ export default function App() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
+        <div
+          className="grid gap-4 md:gap-6"
+          style={
+            isMobileLayout
+              ? { gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(140px, 44vw, 190px), 1fr))' }
+              : {
+                  gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
+                  justifyContent: 'flex-start',
+                }
+          }
+        >
           {collection.map(record => (
             <VinylCard key={record.id} record={record} onRemove={handleRemoveFromCollection} />
           ))}
@@ -149,53 +424,238 @@ export default function App() {
     </div>
   );
 
-  const SearchView = () => (
+  const renderSearchView = () => (
     <div className="p-4 md:p-8 pb-24">
       <h2 className="text-3xl font-bold text-white mb-6">Discover Vinyl</h2>
-      <div className="flex gap-2 mb-8">
-        <input 
-          type="text" 
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="Search artist, album, or genre..."
-          className="flex-1 bg-vinyl-800 text-white border border-vinyl-700 rounded-lg p-3 focus:ring-1 focus:ring-vinyl-accent focus:outline-none"
-        />
-        <button 
-          onClick={handleSearch}
-          disabled={isSearching}
-          className="bg-vinyl-700 hover:bg-vinyl-600 text-white px-6 rounded-lg transition-colors font-medium disabled:opacity-50"
-        >
-          {isSearching ? '...' : 'Search'}
-        </button>
+      <div className="flex flex-col gap-3 mb-4">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch(1)}
+            placeholder="Search artist or album..."
+            className="flex-1 bg-vinyl-800 text-white border border-vinyl-700 rounded-lg p-3 focus:ring-1 focus:ring-vinyl-accent focus:outline-none"
+          />
+          <button
+            onClick={() => handleSearch(1)}
+            disabled={isSearching}
+            className="bg-vinyl-700 hover:bg-vinyl-600 text-white px-6 rounded-lg transition-colors font-medium disabled:opacity-50"
+          >
+            {isSearching ? '...' : 'Search'}
+          </button>
+        </div>
+        <div className="flex items-center gap-5 text-sm text-gray-300">
+          <label className="inline-flex items-center gap-2 select-none">
+            <input
+              type="checkbox"
+              checked={formatFilters.vinyl}
+              onChange={(e) =>
+                setFormatFilters((prev) => ({
+                  ...prev,
+                  vinyl: e.target.checked,
+                }))
+              }
+              className="accent-vinyl-accent"
+            />
+            Vinyl
+          </label>
+          <label className="inline-flex items-center gap-2 select-none">
+            <input
+              type="checkbox"
+              checked={formatFilters.cd}
+              onChange={(e) =>
+                setFormatFilters((prev) => ({
+                  ...prev,
+                  cd: e.target.checked,
+                }))
+              }
+              className="accent-vinyl-accent"
+            />
+            CD
+          </label>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {searchResults.map((record) => (
-          <div key={record.id} className="flex bg-vinyl-800 rounded-lg overflow-hidden border border-vinyl-700">
-             <img 
-              src={record.coverUrl} 
-              alt={record.title}
-              className="w-24 h-24 object-cover"
-            />
-            <div className="p-3 flex-1 flex flex-col justify-between">
-              <div>
-                <h4 className="font-bold text-white truncate">{record.title}</h4>
-                <p className="text-sm text-gray-400">{record.artist}</p>
-              </div>
-              <button 
-                onClick={() => handleAddToCollection(record)}
-                className="self-end text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-1 rounded transition-colors"
-              >
-                Add to Collection
-              </button>
-            </div>
+      {isSearching && (
+        <div className="mb-4 bg-vinyl-800 border border-vinyl-700 rounded-lg p-3">
+          <div className="flex items-center gap-3 text-sm text-gray-200">
+            <div className="w-4 h-4 border-2 border-vinyl-accent border-t-transparent rounded-full animate-spin" />
+            Searching MusicBrainz release groups...
           </div>
-        ))}
+          <div className="mt-3 h-1.5 bg-vinyl-700 rounded overflow-hidden">
+            <div className="search-progress-bar h-full bg-vinyl-accent" />
+          </div>
+        </div>
+      )}
+
+      {searchPage.total > 0 && (
+        <div className="mb-4 text-sm text-gray-400 flex flex-wrap gap-4">
+          <span>
+            {searchPage.isTotalExact
+              ? `${searchPage.total.toLocaleString()} matching release groups`
+              : `${searchPage.total.toLocaleString()}+ matching release groups loaded`}
+          </span>
+          <span>
+            {searchPage.isTotalExact
+              ? `Page ${searchPage.page} of ${totalPages}`
+              : `Page ${searchPage.page}`}
+          </span>
+          <span>{`${filteredGroups.length} shown on this page`}</span>
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {filteredGroups.map((group) => {
+          const details = groupReleases[group.releaseGroupId];
+          const filteredReleases = getFilteredReleases(group);
+          const isExpanded = Boolean(expandedGroups[group.releaseGroupId]);
+          const loadingGroup = Boolean(loadingGroupIds[group.releaseGroupId]);
+          const releaseCount = group.totalReleases;
+          const canExpand = releaseCount > 1;
+          const discogsSearchUrl = `https://www.discogs.com/search/?q=${encodeURIComponent(
+            `${group.artist} ${group.title}`,
+          )}&type=master`;
+          const discogsGroupUrl = group.discogsMasterUrl ?? details?.discogsMasterUrl ?? discogsSearchUrl;
+
+          return (
+            <div key={group.releaseGroupId} className="bg-vinyl-800 rounded-xl border border-vinyl-700 overflow-hidden">
+              <button
+                onClick={() => toggleGroupExpanded(group)}
+                className="w-full text-left p-4 flex gap-4 hover:bg-vinyl-700/30 transition-colors"
+              >
+                <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0 bg-vinyl-900">
+                  {renderCoverThumb(`group-${group.releaseGroupId}`, group.title, group.thumbnailUrl, 'No group art')}
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-white truncate">{group.title}</h3>
+                  <p className="text-sm text-gray-400 truncate">{group.artist}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {[group.firstReleaseDate?.slice(0, 4), `${releaseCount} matching release${releaseCount === 1 ? '' : 's'}`]
+                      .filter(Boolean)
+                      .join(' • ')}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1 truncate">
+                    {`Formats: ${group.availableFormats.length > 0 ? group.availableFormats.join(', ') : 'Unknown'}`}
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-3 text-xs">
+                    <a
+                      href={group.releaseGroupUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-vinyl-accent hover:text-white underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      MusicBrainz Group
+                    </a>
+                    <a
+                      href={discogsGroupUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-vinyl-accent hover:text-white underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {group.discogsMasterUrl || details?.discogsMasterUrl ? 'Discogs Master' : 'Discogs Search'}
+                    </a>
+                  </div>
+                </div>
+
+                <div className="self-center">
+                  <div className="min-w-[180px] px-4 py-3 rounded-lg border border-vinyl-600 bg-vinyl-900 text-sm text-gray-200 flex items-center justify-center gap-2">
+                    <span>{canExpand ? (isExpanded ? 'Hide releases' : 'Show releases') : 'Single release'}</span>
+                    <span className={`text-base leading-none transition-transform ${isExpanded ? 'rotate-180' : ''}`}>⌄</span>
+                  </div>
+                </div>
+              </button>
+
+              {isExpanded && (
+                <div className="px-4 pb-4 space-y-3 border-t border-vinyl-700/70">
+                  {(!details || loadingGroup) && (
+                    <div className="text-sm text-gray-400 py-3">Loading release variants...</div>
+                  )}
+
+                  {details && filteredReleases.length === 0 && (
+                    <div className="text-sm text-gray-500 py-3">
+                      No releases in this group match the selected formats.
+                    </div>
+                  )}
+
+                  {filteredReleases.map((record) => {
+                    const country = formatCountry(record.country);
+                    return (
+                      <div key={record.id} className="flex bg-vinyl-900 rounded-lg p-3 border border-vinyl-700 gap-3">
+                        <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0">
+                          {renderCoverThumb(record.id, record.title, [record.coverUrl, group.thumbnailUrl])}
+                        </div>
+                        <div className="min-w-0 flex-1 flex flex-col justify-between">
+                          <div>
+                            <h4 className="font-bold text-white truncate">{record.title}</h4>
+                            <p className="text-sm text-gray-400 truncate">{record.artist}</p>
+                            <p className="text-xs text-gray-500 mt-1 truncate">
+                              {[record.year, country, record.format, record.releaseStatus, record.genre]
+                                .filter(Boolean)
+                                .join(' • ') || 'Metadata unavailable'}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {record.edition ? `${record.edition} • ` : ''}
+                              {record.musicBrainzId && (
+                                <a
+                                  href={record.releaseUrl ?? `https://musicbrainz.org/release/${record.musicBrainzId}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-vinyl-accent hover:text-white underline"
+                                >
+                                  MBID {record.musicBrainzId.slice(0, 8)}
+                                </a>
+                              )}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => handleAddToCollection(record)}
+                            className="self-end text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-1 rounded transition-colors"
+                          >
+                            Add to Collection
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
-      
-      {!isSearching && searchResults.length === 0 && searchQuery && (
-        <div className="text-center text-gray-500 mt-10">No results found. Try a different query.</div>
+
+      {!isSearching && searchPage.groups.length === 0 && searchQuery && (
+        <div className="text-center text-gray-500 mt-10">
+          No results found. Try a different query.
+        </div>
+      )}
+
+      {(searchPage.hasMore || searchPage.page > 1) && (
+        <div className="mt-8 flex items-center justify-center gap-2">
+          <button
+            disabled={searchPage.page <= 1 || isSearching}
+            onClick={() => handleSearch(searchPage.page - 1)}
+            className="px-4 py-2 rounded bg-vinyl-800 border border-vinyl-700 disabled:opacity-50"
+          >
+            Prev
+          </button>
+          <span className="text-sm text-gray-400 px-2">
+            {searchPage.isTotalExact
+              ? `Page ${searchPage.page} / ${totalPages}`
+              : `Page ${searchPage.page}`}
+          </span>
+          <button
+            disabled={!searchPage.hasMore || isSearching}
+            onClick={() => handleSearch(searchPage.page + 1)}
+            className="px-4 py-2 rounded bg-vinyl-800 border border-vinyl-700 disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
       )}
     </div>
   );
@@ -271,7 +731,7 @@ export default function App() {
             }}
           />
         ) : view === ViewState.SEARCH ? (
-          <SearchView />
+          renderSearchView()
         ) : (
           <DashboardView />
         )}
@@ -304,4 +764,24 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+function clampCollectionCardSize(value: number): number {
+  return Math.max(COLLECTION_CARD_SIZE_MIN, Math.min(COLLECTION_CARD_SIZE_MAX, value));
+}
+
+function loadStoredCollectionCardSize(): number {
+  if (typeof window === 'undefined') {
+    return DEFAULT_COLLECTION_CARD_SIZE;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(COLLECTION_CARD_SIZE_KEY);
+    if (!raw) return DEFAULT_COLLECTION_CARD_SIZE;
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isNaN(parsed)) return DEFAULT_COLLECTION_CARD_SIZE;
+    return clampCollectionCardSize(parsed);
+  } catch {
+    return DEFAULT_COLLECTION_CARD_SIZE;
+  }
 }

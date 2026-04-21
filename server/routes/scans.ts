@@ -10,7 +10,19 @@ interface CollectionRow {
   artist: string;
   title: string;
   year: string | null;
+  release_date: string | null;
   genre: string | null;
+  format: string | null;
+  country: string | null;
+  release_status: string | null;
+  edition: string | null;
+  musicbrainz_id: string | null;
+  release_group_id: string | null;
+  release_group_title: string | null;
+  release_group_url: string | null;
+  release_url: string | null;
+  discogs_url: string | null;
+  thumbnail_url: string | null;
   cover_url: string | null;
   date_added: number;
   notes: string | null;
@@ -23,7 +35,19 @@ function rowToRecord(row: CollectionRow) {
     artist: row.artist,
     title: row.title,
     year: row.year ?? undefined,
+    releaseDate: row.release_date ?? undefined,
     genre: row.genre ?? undefined,
+    format: row.format ?? undefined,
+    country: row.country ?? undefined,
+    releaseStatus: row.release_status ?? undefined,
+    edition: row.edition ?? undefined,
+    musicBrainzId: row.musicbrainz_id ?? undefined,
+    releaseGroupId: row.release_group_id ?? undefined,
+    releaseGroupTitle: row.release_group_title ?? undefined,
+    releaseGroupUrl: row.release_group_url ?? undefined,
+    releaseUrl: row.release_url ?? undefined,
+    discogsUrl: row.discogs_url ?? undefined,
+    thumbnailUrl: row.thumbnail_url ?? undefined,
     coverUrl: row.cover_url ?? undefined,
     dateAdded: row.date_added,
     notes: row.notes ?? undefined,
@@ -54,7 +78,19 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
       artist,
       title,
       year,
+      releaseDate,
       genre,
+      format,
+      country,
+      releaseStatus,
+      edition,
+      musicBrainzId,
+      releaseGroupId,
+      releaseGroupTitle,
+      releaseGroupUrl,
+      releaseUrl,
+      discogsUrl,
+      thumbnailUrl,
       notes,
       capturedImage, // base64 photo from scanner
       coverUrl: providedCoverUrl, // URL from search result
@@ -62,7 +98,19 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
       artist?: string;
       title?: string;
       year?: string;
+      releaseDate?: string;
       genre?: string;
+      format?: string;
+      country?: string;
+      releaseStatus?: string;
+      edition?: string;
+      musicBrainzId?: string;
+      releaseGroupId?: string;
+      releaseGroupTitle?: string;
+      releaseGroupUrl?: string;
+      releaseUrl?: string;
+      discogsUrl?: string;
+      thumbnailUrl?: string;
       notes?: string;
       capturedImage?: string;
       coverUrl?: string;
@@ -123,14 +171,48 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
     }
 
     db.prepare(
-      `INSERT INTO collection (id, artist, title, year, genre, cover_url, date_added, notes, phash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO collection (
+        id,
+        artist,
+        title,
+        year,
+        release_date,
+        genre,
+        format,
+        country,
+        release_status,
+        edition,
+        musicbrainz_id,
+        release_group_id,
+        release_group_title,
+        release_group_url,
+        release_url,
+        discogs_url,
+        thumbnail_url,
+        cover_url,
+        date_added,
+        notes,
+        phash
+      )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       artist,
       title,
       year ?? null,
+      releaseDate ?? null,
       genre ?? null,
+      format ?? null,
+      country ?? null,
+      releaseStatus ?? null,
+      edition ?? null,
+      musicBrainzId ?? null,
+      releaseGroupId ?? null,
+      releaseGroupTitle ?? null,
+      releaseGroupUrl ?? null,
+      releaseUrl ?? null,
+      discogsUrl ?? null,
+      thumbnailUrl ?? null,
       coverUrl,
       dateAdded,
       notes ?? null,

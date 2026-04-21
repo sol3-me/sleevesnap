@@ -32,6 +32,7 @@ export const Scanner: React.FC<ScannerProps> = ({ onScanComplete, onCancel }) =>
   // search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<VinylRecord[]>([]);
+  const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
 
   // ── Camera helpers ──────────────────────────────────────────────────────────
 
@@ -124,6 +125,7 @@ export const Scanner: React.FC<ScannerProps> = ({ onScanComplete, onCancel }) =>
     setError(null);
     setStage('searching');
     try {
+      setFailedCovers({});
       const results = await searchVinylDatabase(searchQuery);
       setSearchResults(results);
       setStage('search_results');
@@ -143,7 +145,19 @@ export const Scanner: React.FC<ScannerProps> = ({ onScanComplete, onCancel }) =>
         artist: record.artist,
         title: record.title,
         year: record.year,
+        releaseDate: record.releaseDate,
         genre: record.genre,
+        format: record.format,
+        country: record.country,
+        releaseStatus: record.releaseStatus,
+        edition: record.edition,
+        musicBrainzId: record.musicBrainzId,
+        releaseGroupId: record.releaseGroupId,
+        releaseGroupTitle: record.releaseGroupTitle,
+        releaseGroupUrl: record.releaseGroupUrl,
+        releaseUrl: record.releaseUrl,
+        discogsUrl: record.discogsUrl,
+        thumbnailUrl: record.thumbnailUrl,
         notes: record.notes,
         capturedImage: capturedImage ?? undefined,
         coverUrl: record.coverUrl,
@@ -167,6 +181,7 @@ export const Scanner: React.FC<ScannerProps> = ({ onScanComplete, onCancel }) =>
     setMatchedRecord(null);
     setSearchQuery('');
     setSearchResults([]);
+    setFailedCovers({});
     setError(null);
     setStage('capture');
     startCamera();
@@ -345,13 +360,26 @@ export const Scanner: React.FC<ScannerProps> = ({ onScanComplete, onCancel }) =>
                 key={record.id}
                 className="flex items-center gap-3 bg-vinyl-800 rounded-lg p-3 border border-vinyl-700"
               >
-                {record.coverUrl && (
-                  <img
-                    src={record.coverUrl}
-                    alt={record.title}
-                    className="w-12 h-12 object-cover rounded flex-shrink-0 bg-gray-700"
-                  />
-                )}
+                <div className="w-12 h-12 rounded flex-shrink-0 overflow-hidden bg-gray-700 border border-vinyl-700">
+                  {record.coverUrl && !failedCovers[record.id] ? (
+                    <img
+                      src={record.coverUrl}
+                      alt={record.title}
+                      className="w-full h-full object-cover"
+                      onError={() =>
+                        setFailedCovers((prev) => ({
+                          ...prev,
+                          [record.id]: true,
+                        }))
+                      }
+                    />
+                  ) : (
+                    <div className="w-full h-full text-[10px] text-gray-300 flex flex-col items-center justify-center leading-tight">
+                      <span className="text-sm" aria-hidden="true">♪</span>
+                      <span>No art</span>
+                    </div>
+                  )}
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-bold text-white truncate">{record.title}</p>
                   <p className="text-sm text-gray-400 truncate">{record.artist}</p>

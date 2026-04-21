@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>sleevesnap</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -41,6 +42,16 @@
       }
       ::-webkit-scrollbar-thumb:hover {
         background: #444; 
+      }
+
+      @keyframes search-progress {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(300%); }
+      }
+
+      .search-progress-bar {
+        width: 35%;
+        animation: search-progress 1.2s linear infinite;
       }
     </style>
   <script type="importmap">
