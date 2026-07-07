@@ -1,6 +1,8 @@
 import { Router } from 'express';
-import { db } from '../db.js';
+import { db, incrementVisionCallCount } from '../db.js';
 import { computeHash, hammingDistance } from '../imageHash.js';
+import { identifyVinyl } from '../services/visionProvider/index.js';
+import { searchReleasesByText } from './search.js';
 
 export const scanRouter = Router();
 
@@ -110,9 +112,49 @@ scanRouter.post('/', async (req, res) => {
   const MATCH_THRESHOLD = 15; // bits; tuned for real-world photo variation
   if (bestMatch && bestDistance <= MATCH_THRESHOLD) {
     res.json({ matched: true, record: rowToRecord(bestMatch) });
+    return;
+  }
+
+  const suggestions = await getVisionSuggestions(imageBuffer, req.header('x-vision-admin-key'));
+  if (suggestions.length > 0) {
+    res.json({ matched: false, suggestions });
   } else {
     res.json({ matched: false });
   }
 });
+
+const DEFAULT_VISION_DAILY_LIMIT = 5;
+const VALIDATION_SEARCH_LIMIT = 5;
+
+/**
+ * Runs the vision-assisted identification + MusicBrainz validation flow for
+ * a photo that didn't match anything in the collection. Enforces a global
+ * daily cap on vision-provider calls (this app has no per-user accounts, so
+ * the cap is shared across the whole deployment) with an optional admin
+ * bypass. Never throws — any failure degrades to "no suggestions", which the
+ * client already treats identically to today's plain no-match state.
+ */
+async function getVisionSuggestions(imageBuffer: Buffer, adminHeaderValue: string | undefined) {
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const adminKey = process.env.VISION_ADMIN_KEY;
+  const isAdminBypass = Boolean(adminKey) && adminHeaderValue === adminKey;
+
+  const count = incrementVisionCallCount(dateKey);
+  const limit = Number(process.env.VISION_DAILY_LIMIT ?? DEFAULT_VISION_DAILY_LIMIT);
+  if (!isAdminBypass && count > limit) {
+    return [];
+  }
+
+  try {
+    const [topGuess] = await identifyVinyl(imageBuffer);
+    if (!topGuess) return [];
+
+    const appName = process.env.MUSICBRAINZ_APP_NAME ?? 'sleevesnap';
+    return await searchReleasesByText(`${topGuess.artist} ${topGuess.title}`, appName, VALIDATION_SEARCH_LIMIT);
+  } catch (err) {
+    console.warn('[scan] Vision-assisted identification failed:', err);
+    return [];
+  }
+}
 
 

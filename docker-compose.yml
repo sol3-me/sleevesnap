@@ -46,6 +46,12 @@ services:
       # Optional API integrations
       DISCOGS_TOKEN: "${DISCOGS_TOKEN:-}"
       LASTFM_API_KEY: "${LASTFM_API_KEY:-}"
+
+      # AI Vision (optional; leave blank to disable)
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      VISION_DAILY_LIMIT: "${VISION_DAILY_LIMIT:-5}"
+      VISION_ADMIN_KEY: "${VISION_ADMIN_KEY:-}"
     volumes:
       - sleevesnap_data:/data
     depends_on:
@@ -75,6 +81,12 @@ services:
       PUBLIC_URL: "${PUBLIC_URL:-http://localhost:3000}"
       DISCOGS_TOKEN: "${DISCOGS_TOKEN:-}"
       LASTFM_API_KEY: "${LASTFM_API_KEY:-}"
+
+      # AI Vision (optional; leave blank to disable)
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      VISION_DAILY_LIMIT: "${VISION_DAILY_LIMIT:-5}"
+      VISION_ADMIN_KEY: "${VISION_ADMIN_KEY:-}"
     volumes:
       - sleevesnap_data:/data
     healthcheck:
@@ -104,6 +116,12 @@ services:
       S3_PUBLIC_URL: "${S3_PUBLIC_URL:-}"
       DISCOGS_TOKEN: "${DISCOGS_TOKEN:-}"
       LASTFM_API_KEY: "${LASTFM_API_KEY:-}"
+
+      # AI Vision (optional; leave blank to disable)
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      VISION_DAILY_LIMIT: "${VISION_DAILY_LIMIT:-5}"
+      VISION_ADMIN_KEY: "${VISION_ADMIN_KEY:-}"
     volumes:
       - sleevesnap_data:/data
     healthcheck:

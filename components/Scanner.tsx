@@ -106,9 +106,13 @@ export const Scanner: React.FC<ScannerProps> = ({ onScanComplete, onCancel }) =>
     setStage('analyzing');
     try {
       const result = await scanImage(base64);
-      if (result.matched) {
+      if (result.matched === true) {
         setMatchedRecord(result.record);
         setStage('match_found');
+      } else if (result.suggestions?.length) {
+        setFailedCovers({});
+        setSearchResults(result.suggestions);
+        setStage('search_results');
       } else {
         setStage('no_match');
       }

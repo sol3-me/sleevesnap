@@ -223,16 +223,16 @@ searchRouter.get('/groups/:releaseGroupId/releases', async (req, res) => {
  * Searches MusicBrainz by free-text query and returns vinyl-format results,
  * mirroring the filtering behaviour of `POST /` above. Exported for reuse by
  * the vision-assisted scan flow to validate an AI guess.
- *
- * TODO: stub — always returns []. Real implementation lands in the
- * implementation commit.
  */
 export async function searchReleasesByText(
-  _query: string,
-  _appName: string,
-  _limit: number,
+  query: string,
+  appName: string,
+  limit: number,
 ): Promise<SearchReleaseResult[]> {
-  return [];
+  const releases = await fetchReleasesByText(query, appName, limit);
+  return releases
+    .map((release) => mapRelease(release))
+    .filter((release) => isVinylFormat(release.format));
 }
 
 function normalizeRequestedFormats(rawFormats: string[] | undefined): SearchFormat[] {

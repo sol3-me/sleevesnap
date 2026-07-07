@@ -7,8 +7,12 @@
 		"dev": "vite",
 		"dev:server": "tsx watch server/index.ts",
 		"build": "vite build && tsc -p tsconfig.server.json",
-		"test": "npm run test:search",
+		"test": "npm run test:search && npm run test:scan && npm run test:vision && npm run test:db && npm run test:rate-limits",
 		"test:search": "tsx --test server/routes/search.test.ts",
+		"test:scan": "tsx --test server/routes/scan.test.ts",
+		"test:vision": "tsx --test server/services/visionProvider/index.test.ts",
+		"test:db": "tsx --test server/db.test.ts",
+		"test:rate-limits": "tsx --test server/rateLimiters.test.ts",
 		"preview": "vite preview",
 		"start": "node dist-server/index.js"
 	},

@@ -82,7 +82,7 @@ export interface ScanResult {
 /** Response from POST /api/scan */
 export type ScanResponse =
   | { matched: true; record: VinylRecord }
-  | { matched: false };
+  | { matched: false; suggestions?: VinylRecord[] };
 
 /** Payload for POST /api/scans (confirmed scan upload) */
 export interface ScanUploadPayload {

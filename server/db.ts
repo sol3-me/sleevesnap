@@ -84,9 +84,18 @@ export function initDb(): void {
  * Atomically increments and returns today's vision-call counter for `date`
  * (YYYY-MM-DD). Used to enforce the global daily cap on AI vision calls.
  *
- * TODO: stub — always returns 0. Real atomic upsert lands in the
- * implementation commit.
+ * Synchronous and called before any `await` in the caller, so there's no
+ * race window across concurrent requests: better-sqlite3 is synchronous and
+ * Node is single-threaded, so this statement always completes atomically
+ * before another request's handler can run.
  */
-export function incrementVisionCallCount(_date: string): number {
-  return 0;
+export function incrementVisionCallCount(date: string): number {
+  const row = db
+    .prepare(
+      `INSERT INTO vision_call_tracker (date, call_count) VALUES (?, 1)
+       ON CONFLICT(date) DO UPDATE SET call_count = call_count + 1
+       RETURNING call_count`,
+    )
+    .get(date) as { call_count: number };
+  return row.call_count;
 }
