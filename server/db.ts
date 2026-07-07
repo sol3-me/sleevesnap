@@ -47,6 +47,11 @@ export function initDb(): void {
       cover_url   TEXT NOT NULL,
       fetched_at  INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS vision_call_tracker (
+      date        TEXT PRIMARY KEY,
+      call_count  INTEGER NOT NULL
+    );
   `);
 
   // Incremental migration: add phash column if it doesn't exist yet
@@ -73,4 +78,15 @@ export function initDb(): void {
   addColumnIfMissing('thumbnail_url', 'TEXT');
 
   console.log('[db] Database initialised at', DB_PATH);
+}
+
+/**
+ * Atomically increments and returns today's vision-call counter for `date`
+ * (YYYY-MM-DD). Used to enforce the global daily cap on AI vision calls.
+ *
+ * TODO: stub — always returns 0. Real atomic upsert lands in the
+ * implementation commit.
+ */
+export function incrementVisionCallCount(_date: string): number {
+  return 0;
 }

@@ -2,7 +2,7 @@ import express from 'express';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { afterEach, test } from 'node:test';
-import { searchRouter } from './search.js';
+import { searchRouter, searchReleasesByText } from './search.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -369,4 +369,46 @@ test('POST /api/search/groups returns empty page when no formats are selected', 
     } finally {
         await closeServer(server);
     }
+});
+
+test('searchReleasesByText filters to vinyl formats only, matching POST / behaviour', async () => {
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string'
+                ? input
+                : input instanceof URL
+                    ? input.toString()
+                    : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'release-vinyl',
+                        title: 'Rated R',
+                        date: '2000-06-06',
+                        media: [{ format: '12" Vinyl' }],
+                        'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                        'release-group': { id: 'group-1', title: 'Rated R', 'primary-type': 'Album' },
+                    },
+                    {
+                        id: 'release-cd',
+                        title: 'Rated R',
+                        date: '2000-06-06',
+                        media: [{ format: 'CD' }],
+                        'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                        'release-group': { id: 'group-1', title: 'Rated R', 'primary-type': 'Album' },
+                    },
+                ],
+            });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const results = await searchReleasesByText('Rated R', 'sleevesnap-test', 15);
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.musicBrainzId, 'release-vinyl');
 });

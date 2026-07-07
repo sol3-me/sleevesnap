@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb } from './db.js';
@@ -10,6 +9,7 @@ import { searchRouter } from './routes/search.js';
 import { createCoversRouter } from './routes/covers.js';
 import { createScansRouter } from './routes/scans.js';
 import { createStorageProvider } from './storage/index.js';
+import { apiLimiter, scanLimiter } from './rateLimiters.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,24 +21,6 @@ const NODE_ENV = process.env.NODE_ENV ?? 'development';
 // Core middleware
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
-
-// Rate limiting – protects all API routes from abuse
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.' },
-});
-
-// Strict limiter for the scan endpoint (image hashing is CPU-bound)
-const scanLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.' },
-});
 
 // Initialise database
 initDb();
