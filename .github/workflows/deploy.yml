@@ -86,8 +86,12 @@ jobs:
           chmod 600 "$ENV_FILE"
           echo "ENV_FILE=$ENV_FILE" >> "$GITHUB_ENV"
 
-      - name: Ensure persistent data directory exists
-        run: mkdir -p "${{ env.DATA_DIR }}"
+      - name: Ensure persistent data directory is writable
+        run: |
+          mkdir -p "${{ env.DATA_DIR }}/covers"
+          # The app runs as a non-root user in the container; make sure first
+          # boot can create /data/cache.db and write cover files.
+          chmod -R 0777 "${{ env.DATA_DIR }}"
 
       - name: Restart container
         run: |
