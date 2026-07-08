@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Toaster, toast } from 'sonner';
 import { FilterDropdown } from './components/FilterDropdown';
 import { Scanner } from './components/Scanner';
 import { VinylCard } from './components/VinylCard';
@@ -8,6 +9,10 @@ import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vi
 import { SearchGroupReleases, SearchRelease, SearchResultGroup, SearchResultPage, UserProfile, ViewState, VinylRecord } from './types';
 
 const SEARCH_PAGE_SIZE = 5;
+// How long "Undo" stays clickable after removing a record before the delete
+// actually reaches the server. Matched to the toast's own visible duration
+// below so the affordance never disappears before the action it undoes.
+const REMOVE_UNDO_WINDOW_MS = 5000;
 const SEARCH_FORMAT_FILTERS_KEY = 'sleevesnap:search-filters:v2';
 const SEARCH_TYPE_FILTERS_KEY = 'sleevesnap:search-type-filters:v1';
 const COLLECTION_CARD_SIZE_KEY = 'sleevesnap:collection-card-size:v1';
@@ -152,7 +157,6 @@ export default function App() {
   const [discoveredTypeBuckets, setDiscoveredTypeBuckets] = useState<string[]>([]);
   const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
   const [isSearching, setIsSearching] = useState(false);
-  const [notification, setNotification] = useState<string | null>(null);
   const [collectionCardSize, setCollectionCardSize] = useState<number>(() => loadStoredCollectionCardSize());
   const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false,
@@ -162,6 +166,10 @@ export default function App() {
   const releasesRef = useRef<Record<string, SearchGroupReleases>>({});
   const loadingRef = useRef<Set<string>>(new Set());
   const highlightedCardRef = useRef<HTMLDivElement>(null);
+  // Records the user has just removed but hasn't been sent to the server
+  // yet, keyed by record id — gives the "Undo" toast action a window to
+  // cancel the delete before it actually happens.
+  const pendingRemovalsRef = useRef<Record<string, { record: VinylRecord; timeoutId: ReturnType<typeof setTimeout> }>>({});
 
   // Initialize
   useEffect(() => {
@@ -173,12 +181,22 @@ export default function App() {
     }
   }, []);
 
+  // Cancel any in-flight "undo window" deletes on unmount so we never call
+  // removeRecord against a component that's gone away.
+  useEffect(() => {
+    return () => {
+      for (const id of Object.keys(pendingRemovalsRef.current)) {
+        clearTimeout(pendingRemovalsRef.current[id].timeoutId);
+      }
+    };
+  }, []);
+
   const handleLogin = (name: string) => {
     const newUser = loginUser(name);
     setUser(newUser);
     getCollection().then(setCollection);
     setView(ViewState.DASHBOARD);
-    showNotification(`Welcome back, ${name}!`);
+    toast.success(`Welcome back, ${name}!`);
   };
 
   const handleLogout = () => {
@@ -188,30 +206,59 @@ export default function App() {
     setView(ViewState.LOGIN);
   };
 
-  const showNotification = (msg: string) => {
-    setNotification(msg);
-    setTimeout(() => setNotification(null), 3000);
-  };
-
   const handleAddToCollection = async (record: VinylRecord) => {
     const success = await addRecord(record);
     if (success) {
       logEvent('collection', 'Added to collection', { artist: record.artist, title: record.title });
       setCollection(await getCollection());
-      showNotification(`Added "${record.title}" to collection`);
+      toast.success(`Added "${record.title}" to collection`);
       // If we were searching, stay there, if scanning, go to dashboard
       if (view === ViewState.SCANNER) setView(ViewState.DASHBOARD);
     } else {
       logEvent('collection', 'Add skipped — already in collection', { artist: record.artist, title: record.title });
-      showNotification(`"${record.title}" is already in your collection`);
+      toast(`"${record.title}" is already in your collection`);
     }
   };
 
-  const handleRemoveFromCollection = async (id: string) => {
-    await removeRecord(id);
-    logEvent('collection', 'Removed from collection', { recordId: id });
-    setCollection(await getCollection());
-    showNotification("Record removed");
+  // Optimistically hides the record immediately, but only actually deletes it
+  // server-side after a short grace period — the "Undo" toast action cancels
+  // the pending delete and restores it. One mis-tap on mobile shouldn't
+  // permanently destroy a collection entry with no way back.
+  const handleRemoveFromCollection = (id: string) => {
+    const record = collection.find((r) => r.id === id);
+    if (!record) return;
+
+    setCollection((prev) => prev.filter((r) => r.id !== id));
+
+    const timeoutId = setTimeout(() => {
+      delete pendingRemovalsRef.current[id];
+      void (async () => {
+        try {
+          await removeRecord(id);
+          logEvent('collection', 'Removed from collection', { recordId: id });
+        } catch (err) {
+          logWarn('collection', 'Remove failed', { recordId: id, error: err instanceof Error ? err.message : String(err) });
+          setCollection(await getCollection());
+          toast.error(`Failed to remove "${record.title}"`);
+        }
+      })();
+    }, REMOVE_UNDO_WINDOW_MS);
+
+    pendingRemovalsRef.current[id] = { record, timeoutId };
+
+    toast(`Removed "${record.title}"`, {
+      duration: REMOVE_UNDO_WINDOW_MS,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const pending = pendingRemovalsRef.current[id];
+          if (!pending) return;
+          clearTimeout(pending.timeoutId);
+          delete pendingRemovalsRef.current[id];
+          setCollection((prev) => [pending.record, ...prev]);
+        },
+      },
+    });
   };
 
   useEffect(() => {
@@ -338,7 +385,7 @@ export default function App() {
       // them with an empty page — a failed "next page" fetch shouldn't wipe
       // out the page the user is already looking at.
       logWarn('discover', 'Search failed', { query: queryToSearch, page, error: err instanceof Error ? err.message : String(err) });
-      showNotification('Search failed. Please try again.');
+      toast.error('Search failed. Please try again.');
     } finally {
       setIsSearching(false);
     }
@@ -911,7 +958,12 @@ export default function App() {
   // --- Main Layout Render ---
 
   if (!user || view === ViewState.LOGIN) {
-    return <LoginView />;
+    return (
+      <>
+        <LoginView />
+        <Toaster theme="dark" position="bottom-right" />
+      </>
+    );
   }
 
   return (
@@ -978,13 +1030,13 @@ export default function App() {
             onScanComplete={async (record) => {
               setCollection(await getCollection());
               setView(ViewState.DASHBOARD);
-              showNotification(`Added "${record.title}" to collection!`);
+              toast.success(`Added "${record.title}" to collection!`);
             }}
             onAlreadyInCollection={(record) => {
               // Already in the collection — no save happened, so no need to
               // refetch it. Just take the user back and point at it.
               setView(ViewState.DASHBOARD);
-              showNotification(`"${record.title}" is already in your collection`);
+              toast(`"${record.title}" is already in your collection`);
               setHighlightedRecordId(record.id);
             }}
           />
@@ -1013,13 +1065,8 @@ export default function App() {
           </nav>
         )}
 
-        {/* Global Notification Toast */}
-        {notification && (
-          <div className="fixed top-20 right-4 md:bottom-8 md:top-auto md:right-8 bg-white text-black px-6 py-3 rounded-lg shadow-xl animate-bounce z-50 font-medium">
-            {notification}
-          </div>
-        )}
       </main>
+      <Toaster theme="dark" position="bottom-right" />
     </div>
   );
 }
