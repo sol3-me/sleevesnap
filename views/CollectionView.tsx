@@ -124,6 +124,16 @@ export function CollectionView() {
 
   return (
     <div className="p-4 md:p-8 pb-24">
+      {/* Desktop-only quick-add FAB — mobile already has the camera button in
+          the header row above plus the bottom nav's scan button. */}
+      <Link
+        to="/discover"
+        className="hidden md:flex fixed bottom-8 right-8 items-center gap-2 bg-vinyl-accent hover:bg-red-500 text-white px-5 py-3 rounded-full shadow-lg transition-colors z-30"
+      >
+        <Icons.Search />
+        <span className="font-medium">Add Record</span>
+      </Link>
+
       <div className="flex justify-between items-end mb-8">
         <div>
           <h2 className="text-3xl font-bold text-white">Your Collection</h2>
