@@ -12,6 +12,11 @@ const FLAT_SEARCH_LIMIT = 15;
 // Scales naturally with pageSize since each round already requests
 // `pageSize` candidates — no separate scan-budget bookkeeping needed.
 const MAX_RAW_BATCHES_PER_PAGE = 3;
+// MusicBrainz's public API is rate-limited and occasionally slow/unavailable;
+// a single timeout or 503 shouldn't fail the whole search. Retry transient
+// failures a couple of times with a short backoff before giving up.
+const MAX_FETCH_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 300;
 
 type SearchFormat = 'vinyl' | 'cd';
 
@@ -384,10 +389,33 @@ async function collectDiscoverPage(
     return { groups: fallbackPage.groups, total, isTotalExact, hasMore };
   }
 
-  // If the exact query naturally ran out at this page boundary but a
-  // fallback exists that we haven't queried yet, the total isn't the full
-  // picture — mark it inexact rather than claiming a false certainty.
-  const isTotalExact = !exactPage.hitRetryCap && !(exactPage.exhausted && hasDistinctFallback);
+  // The exact query's raw candidates for this page were fully drained
+  // (`exhausted`) without filling the page — e.g. the only matching
+  // release-group(s) turned out to have no release in the requested
+  // format(s). `exhausted` means there is provably nothing more to get from
+  // the exact query, so rather than reporting its raw (pre-format-filter)
+  // count as `total` while `groups` comes back short, top the page up from
+  // the fallback query (if one exists) before finalizing total/hasMore. The
+  // fallback space is always untouched here — it's only ever queried once a
+  // later page's offset crosses exactTotal (the branch above), which hasn't
+  // happened for this page since we're past that check.
+  if (exactPage.exhausted && exactPage.groups.length < pageSize) {
+    const remaining = pageSize - exactPage.groups.length;
+    const fallbackTopUp = hasDistinctFallback
+      ? await fetchFilteredReleaseGroupPage(fallbackQuery, appName, selectedFormats, 0, remaining)
+      : { groups: [] as FilteredReleaseGroup[], rawCount: 0, exhausted: true, hitRetryCap: false };
+
+    const seen = new Set(exactPage.groups.map((group) => group.releaseGroupId));
+    const topUpGroups = fallbackTopUp.groups.filter((group) => !seen.has(group.releaseGroupId));
+    const combinedGroups = [...exactPage.groups, ...topUpGroups].slice(0, pageSize);
+
+    const isTotalExact = !fallbackTopUp.hitRetryCap;
+    const hasMore = !isTotalExact;
+
+    return { groups: combinedGroups, total: combinedGroups.length, isTotalExact, hasMore };
+  }
+
+  const isTotalExact = !exactPage.hitRetryCap;
   const exactHasMore = offset + exactPage.groups.length < exactTotal;
   const hasMore = isTotalExact ? exactHasMore : true;
 
@@ -404,6 +432,62 @@ function matchesRequestedFormat(format: string | undefined, selectedFormats: Sea
     (wantsVinyl && /vinyl|\blp\b/.test(lower)) ||
     (wantsCd && /\bcd\b/.test(lower))
   );
+}
+
+/** True for failures worth retrying: request timeouts and transient server-side errors (not 4xx client errors). */
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+function isRetryableFetchError(err: unknown): boolean {
+  // AbortSignal.timeout() rejects with a DOMException named 'TimeoutError';
+  // plain network failures surface as TypeError. Both are transient.
+  if (err instanceof DOMException) return err.name === 'TimeoutError' || err.name === 'AbortError';
+  return err instanceof TypeError;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetches a MusicBrainz URL, retrying up to MAX_FETCH_ATTEMPTS times (with a
+ * short linear backoff) on timeouts and transient 429/5xx responses. Client
+ * errors (4xx other than 429) and non-transient failures are not retried.
+ */
+async function fetchMusicBrainz(url: string, appName: string): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': `${appName}/1.0 (https://github.com/sol3uk/sleevesnap)`,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (res.ok || !isRetryableStatus(res.status) || attempt === MAX_FETCH_ATTEMPTS) {
+        return res;
+      }
+
+      console.warn(`[search] MusicBrainz request retrying after status ${res.status} (attempt ${attempt}): ${url}`);
+    } catch (err) {
+      if (!isRetryableFetchError(err) || attempt === MAX_FETCH_ATTEMPTS) {
+        throw err;
+      }
+
+      lastError = err;
+      console.warn(`[search] MusicBrainz request retrying after error (attempt ${attempt}): ${url} — ${String(err)}`);
+    }
+
+    await sleep(RETRY_BASE_DELAY_MS * attempt);
+  }
+
+  // Unreachable — the loop above always returns or throws on its final
+  // attempt — but keeps TypeScript satisfied about the return type.
+  throw lastError ?? new Error(`MusicBrainz request failed after ${MAX_FETCH_ATTEMPTS} attempts: ${url}`);
 }
 
 async function fetchReleasesByText(
@@ -429,13 +513,7 @@ async function fetchReleasesByQuery(
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      'User-Agent': `${appName}/1.0 (https://github.com/sol3uk/sleevesnap)`,
-      Accept: 'application/json',
-    },
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await fetchMusicBrainz(url.toString(), appName);
 
   if (!res.ok) {
     throw new Error(`MusicBrainz release search failed (${res.status})`);
@@ -457,13 +535,7 @@ async function fetchReleaseGroupsByQuery(
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      'User-Agent': `${appName}/1.0 (https://github.com/sol3uk/sleevesnap)`,
-      Accept: 'application/json',
-    },
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await fetchMusicBrainz(url.toString(), appName);
 
   if (!res.ok) {
     throw new Error(`MusicBrainz release-group search failed (${res.status})`);
@@ -524,13 +596,7 @@ async function fetchReleasesByGroupId(
   url.searchParams.set('inc', 'media');
   url.searchParams.set('limit', String(RELEASE_LIMIT_PER_GROUP));
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      'User-Agent': `${appName}/1.0 (https://github.com/sol3uk/sleevesnap)`,
-      Accept: 'application/json',
-    },
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await fetchMusicBrainz(url.toString(), appName);
 
   if (!res.ok) return [];
 
@@ -547,13 +613,7 @@ async function fetchReleaseGroupDiscogsMasterUrl(
   url.searchParams.set('inc', 'url-rels');
 
   try {
-    const res = await fetch(url.toString(), {
-      headers: {
-        'User-Agent': `${appName}/1.0 (https://github.com/sol3uk/sleevesnap)`,
-        Accept: 'application/json',
-      },
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await fetchMusicBrainz(url.toString(), appName);
 
     if (!res.ok) {
       return undefined;

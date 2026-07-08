@@ -314,7 +314,11 @@ test('POST /api/search/groups queries the release-group endpoint directly with t
             typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const url = new URL(target);
         if (url.pathname === '/ws/2/release-group') {
-            capturedUrl = url;
+            // Only the first call is the exact-phrase query this test cares
+            // about — the format-matching candidate found here exhausts the
+            // exact query's single result, so the page then tops itself up
+            // from the fallback query too (a second, later call).
+            if (!capturedUrl) capturedUrl = url;
             return jsonResponse({ count: 1, 'release-groups': [
                 {
                     id: 'g1',
