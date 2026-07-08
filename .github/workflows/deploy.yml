@@ -1,0 +1,104 @@
+name: Build & Deploy SleeveSnap
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sleevesnap-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: |
+      github.repository == 'sol3-me/sleevesnap' &&
+      github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      IMAGE: ghcr.io/sol3-me/sleevesnap
+      CONTAINER_NAME: sleevesnap
+      HOST_PORT: "8093"
+      CONTAINER_PORT: "3000"
+      DATA_DIR: /runner/persistent_files/sleevesnap/data
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preserve current :latest as :previous (rollback image)
+        run: |
+          if docker pull ${{ env.IMAGE }}:latest 2>/dev/null; then
+            docker tag  ${{ env.IMAGE }}:latest ${{ env.IMAGE }}:previous
+            docker push ${{ env.IMAGE }}:previous
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.IMAGE }}:latest
+
+      - name: Push :latest to GHCR
+        run: docker push ${{ env.IMAGE }}:latest
+
+      - name: Build runtime env file from GitHub secrets
+        env:
+          MUSICBRAINZ_APP_NAME: ${{ vars.MUSICBRAINZ_APP_NAME || 'sleevesnap' }}
+          VISION_DAILY_LIMIT: ${{ vars.VISION_DAILY_LIMIT || '5' }}
+          DISCOGS_TOKEN: ${{ secrets.DISCOGS_TOKEN }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          VISION_ADMIN_KEY: ${{ secrets.VISION_ADMIN_KEY }}
+        run: |
+          ENV_FILE="$RUNNER_TEMP/sleevesnap.env"
+          printf '%s\n' \
+            "NODE_ENV=production" \
+            "PORT=3000" \
+            "MUSICBRAINZ_APP_NAME=$MUSICBRAINZ_APP_NAME" \
+            "CACHE_DB_PATH=/data/cache.db" \
+            "STORAGE_LOCAL_PATH=/data/covers" \
+            "DISCOGS_TOKEN=$DISCOGS_TOKEN" \
+            "LASTFM_API_KEY=$LASTFM_API_KEY" \
+            "GEMINI_API_KEY=$GEMINI_API_KEY" \
+            "OPENAI_API_KEY=$OPENAI_API_KEY" \
+            "VISION_DAILY_LIMIT=$VISION_DAILY_LIMIT" \
+            "VISION_ADMIN_KEY=$VISION_ADMIN_KEY" > "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+          echo "ENV_FILE=$ENV_FILE" >> "$GITHUB_ENV"
+
+      - name: Ensure persistent data directory exists
+        run: mkdir -p "${{ env.DATA_DIR }}"
+
+      - name: Restart container
+        run: |
+          docker rm -f "${{ env.CONTAINER_NAME }}" 2>/dev/null || true
+          docker run -d \
+            --name "${{ env.CONTAINER_NAME }}" \
+            --restart unless-stopped \
+            -p "${{ env.HOST_PORT }}:${{ env.CONTAINER_PORT }}" \
+            -v "${{ env.DATA_DIR }}:/data" \
+            --env-file "$ENV_FILE" \
+            "${{ env.IMAGE }}:latest"
+
+      - name: Clean up dangling images
+        run: docker image prune -f

@@ -20,7 +20,7 @@ services:
       MUSICBRAINZ_APP_NAME: "${MUSICBRAINZ_APP_NAME:-sleevesnap}"
       CACHE_DB_PATH: /data/cache.db
       STORAGE_LOCAL_PATH: /data/covers
-      PUBLIC_URL: "${PUBLIC_URL:-http://localhost:3000}"
+      PUBLIC_URL: "${PUBLIC_URL:-}"
 
       # Optional API integrations
       DISCOGS_TOKEN: "${DISCOGS_TOKEN:-}"

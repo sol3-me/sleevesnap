@@ -8,15 +8,17 @@ import type { BlobStorageProvider } from './BlobStorageProvider.js';
  *
  * Environment variables:
  *   STORAGE_LOCAL_PATH  – directory to store files in (default: /data/covers)
- *   PUBLIC_URL          – base URL of the server (default: http://localhost:3001)
+ *   PUBLIC_URL          – optional base URL of the server (when omitted,
+ *                         returned cover URLs are relative, e.g. /covers/...)
  */
 export class LocalFileSystemProvider implements BlobStorageProvider {
   private readonly storagePath: string;
-  private readonly publicBaseUrl: string;
+  private readonly publicBaseUrl: string | null;
 
   constructor() {
     this.storagePath = process.env.STORAGE_LOCAL_PATH ?? path.join(process.cwd(), 'data', 'covers');
-    this.publicBaseUrl = (process.env.PUBLIC_URL ?? 'http://localhost:3001').replace(/\/$/, '');
+    const configuredPublicUrl = (process.env.PUBLIC_URL ?? '').trim().replace(/\/$/, '');
+    this.publicBaseUrl = configuredPublicUrl || null;
     fs.mkdirSync(this.storagePath, { recursive: true });
   }
 
@@ -24,7 +26,7 @@ export class LocalFileSystemProvider implements BlobStorageProvider {
     const filePath = path.join(this.storagePath, key);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, data);
-    return `${this.publicBaseUrl}/covers/${key}`;
+    return this.publicBaseUrl ? `${this.publicBaseUrl}/covers/${key}` : `/covers/${key}`;
   }
 
   async get(key: string): Promise<Buffer | null> {
