@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FilterDropdown } from './components/FilterDropdown';
 import { Scanner } from './components/Scanner';
 import { VinylCard } from './components/VinylCard';
 import { addRecord, getCollection, getUser, loginUser, logoutUser, removeRecord } from './services/storageService';
@@ -7,45 +8,66 @@ import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vi
 import { SearchGroupReleases, SearchRelease, SearchResultGroup, SearchResultPage, UserProfile, ViewState, VinylRecord } from './types';
 
 const SEARCH_PAGE_SIZE = 5;
-const SEARCH_FILTERS_KEY = 'sleevesnap:search-filters:v2';
+const SEARCH_FORMAT_FILTERS_KEY = 'sleevesnap:search-filters:v2';
+const SEARCH_TYPE_FILTERS_KEY = 'sleevesnap:search-type-filters:v1';
 const COLLECTION_CARD_SIZE_KEY = 'sleevesnap:collection-card-size:v1';
 const COLLECTION_CARD_SIZE_MIN = 180;
 const COLLECTION_CARD_SIZE_MAX = 360;
 const DEFAULT_COLLECTION_CARD_SIZE = 240;
 
-// Format filtering is client-side (see musicbrainz-data-model.md): the
+// Both filters below are client-side (see musicbrainz-data-model.md): the
 // server returns every release-group unfiltered, enriched with its real
-// formats, and these buckets group MusicBrainz's many raw format strings
-// into checkboxes. Anything containing "Vinyl" or "CD" is grouped under one
-// label (12" Vinyl, 10" Vinyl, 2xCD, CD-R, ... are just examples this
-// substring match already catches, not an exhaustive list); everything else
-// (Digital Media, Cassette, Unknown, ...) gets its own checkbox as-is.
+// formats/type, and these "buckets" group MusicBrainz's raw values into
+// dropdown options. Neither dropdown's option list is hardcoded — both are
+// discovered dynamically from real results (see discoveredFormatBuckets /
+// discoveredTypeBuckets below), so an unfamiliar MusicBrainz value (a new
+// format string, or a primary type like "Broadcast") still gets its own
+// option rather than being silently dropped.
 const PRIORITY_FORMAT_BUCKETS = ['Vinyl', 'CD'];
 const KNOWN_FORMAT_BUCKETS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'Vinyl', pattern: /vinyl|\blp\b/i },
   { name: 'CD', pattern: /\bcd\b/i },
 ];
+// Just an ordering preference for the 3 most common release-group types —
+// not an exhaustive option list. Anything else (Broadcast, Other, ...)
+// still renders as its own dynamically-discovered option.
+const PRIORITY_TYPE_BUCKETS = ['Album', 'Single', 'EP'];
 
 function bucketForFormat(rawFormat: string): string {
   const known = KNOWN_FORMAT_BUCKETS.find((bucket) => bucket.pattern.test(rawFormat));
   return known ? known.name : rawFormat;
 }
 
-function bucketsForGroup(group: SearchResultGroup): string[] {
+function formatBucketsForGroup(group: SearchResultGroup): string[] {
   return Array.from(new Set(group.availableFormats.map(bucketForFormat)));
 }
 
-// Shared ordering for format buckets: Vinyl/CD first, then everything else
-// alphabetically, Unknown last. Used both for the top-level filter
-// checkboxes and for grouping releases inside an expanded group's "Show
-// releases" accordion, so the two stay visually consistent.
-function sortFormatBuckets(buckets: string[]): string[] {
-  const priority = PRIORITY_FORMAT_BUCKETS.filter((bucket) => buckets.includes(bucket));
+// A release-group's type is a direct passthrough of MusicBrainz's own
+// primary-type (Album/Single/EP/...), unlike format there's no stringly
+// variant to merge (e.g. no "12" Vinyl" vs "Vinyl" equivalent for type).
+function typeBucketForGroup(group: SearchResultGroup): string {
+  return group.primaryType ?? 'Unknown';
+}
+
+// Shared ordering: priority items first (in the order given), then
+// everything else alphabetically, Unknown last. Used for both the format and
+// type dropdowns, and for grouping releases inside an expanded group's "Show
+// releases" accordion, so all three stay visually consistent.
+function sortBucketsWithPriority(buckets: string[], priority: string[]): string[] {
+  const priorityPresent = priority.filter((bucket) => buckets.includes(bucket));
   const rest = buckets
-    .filter((bucket) => bucket !== 'Unknown' && !PRIORITY_FORMAT_BUCKETS.includes(bucket))
+    .filter((bucket) => bucket !== 'Unknown' && !priority.includes(bucket))
     .sort((a, b) => a.localeCompare(b));
   const unknown = buckets.includes('Unknown') ? ['Unknown'] : [];
-  return [...priority, ...rest, ...unknown];
+  return [...priorityPresent, ...rest, ...unknown];
+}
+
+function sortFormatBuckets(buckets: string[]): string[] {
+  return sortBucketsWithPriority(buckets, PRIORITY_FORMAT_BUCKETS);
+}
+
+function sortTypeBuckets(buckets: string[]): string[] {
+  return sortBucketsWithPriority(buckets, PRIORITY_TYPE_BUCKETS);
 }
 
 // Groups a flat release list into format buckets (same grouping as the
@@ -76,7 +98,7 @@ function groupReleasesByFormatBucket<T extends { format?: string }>(
 // absent (including a bucket never seen before) defaults to checked/visible
 // — the goal is to extract as much signal from MusicBrainz as possible
 // rather than let a gap in its data quietly hide a real result.
-type FormatFilterState = Record<string, boolean>;
+type FilterState = Record<string, boolean>;
 
 const defaultSearchPage: SearchResultPage = {
   query: '',
@@ -88,16 +110,16 @@ const defaultSearchPage: SearchResultPage = {
   groups: [],
 };
 
-function loadStoredFormatFilters(): FormatFilterState {
+function loadStoredFilterState(key: string): FilterState {
   if (typeof window === 'undefined') {
     return {};
   }
 
   try {
-    const raw = window.localStorage.getItem(SEARCH_FILTERS_KEY);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const result: FormatFilterState = {};
+    const result: FilterState = {};
     for (const [bucket, value] of Object.entries(parsed)) {
       if (typeof value === 'boolean') result[bucket] = value;
     }
@@ -124,8 +146,10 @@ export default function App() {
   const [groupReleases, setGroupReleases] = useState<Record<string, SearchGroupReleases>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [loadingGroupIds, setLoadingGroupIds] = useState<Record<string, true>>({});
-  const [formatFilters, setFormatFilters] = useState<FormatFilterState>(() => loadStoredFormatFilters());
+  const [formatFilters, setFormatFilters] = useState<FilterState>(() => loadStoredFilterState(SEARCH_FORMAT_FILTERS_KEY));
+  const [typeFilters, setTypeFilters] = useState<FilterState>(() => loadStoredFilterState(SEARCH_TYPE_FILTERS_KEY));
   const [discoveredFormatBuckets, setDiscoveredFormatBuckets] = useState<string[]>([]);
+  const [discoveredTypeBuckets, setDiscoveredTypeBuckets] = useState<string[]>([]);
   const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
   const [isSearching, setIsSearching] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
@@ -193,11 +217,20 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      window.localStorage.setItem(SEARCH_FILTERS_KEY, JSON.stringify(formatFilters));
+      window.localStorage.setItem(SEARCH_FORMAT_FILTERS_KEY, JSON.stringify(formatFilters));
     } catch {
       // Ignore storage write failures.
     }
   }, [formatFilters]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(SEARCH_TYPE_FILTERS_KEY, JSON.stringify(typeFilters));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [typeFilters]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -283,8 +316,15 @@ export default function App() {
         const base = isNewQuery ? [] : prev;
         const next = new Set(base);
         for (const group of result.groups) {
-          for (const bucket of bucketsForGroup(group)) next.add(bucket);
+          for (const bucket of formatBucketsForGroup(group)) next.add(bucket);
         }
+        return Array.from(next);
+      });
+      // Same accumulate-across-pages, reset-on-new-query pattern for type.
+      setDiscoveredTypeBuckets((prev) => {
+        const base = isNewQuery ? [] : prev;
+        const next = new Set(base);
+        for (const group of result.groups) next.add(typeBucketForGroup(group));
         return Array.from(next);
       });
       setGroupReleases({});
@@ -341,24 +381,35 @@ export default function App() {
     [],
   );
 
-  const isBucketChecked = useCallback(
+  const isFormatBucketChecked = useCallback(
     (bucket: string) => formatFilters[bucket] ?? true,
     [formatFilters],
   );
 
+  const isTypeBucketChecked = useCallback(
+    (bucket: string) => typeFilters[bucket] ?? true,
+    [typeFilters],
+  );
+
   const groupMatchesFilters = useCallback(
-    (group: SearchResultGroup) => bucketsForGroup(group).some(isBucketChecked),
-    [isBucketChecked],
+    (group: SearchResultGroup) =>
+      formatBucketsForGroup(group).some(isFormatBucketChecked) &&
+      isTypeBucketChecked(typeBucketForGroup(group)),
+    [isFormatBucketChecked, isTypeBucketChecked],
   );
 
   const releaseMatchesFilters = useCallback(
-    (format?: string) => isBucketChecked(bucketForFormat(format ?? 'Unknown')),
-    [isBucketChecked],
+    (format?: string) => isFormatBucketChecked(bucketForFormat(format ?? 'Unknown')),
+    [isFormatBucketChecked],
   );
 
-  const sortedBuckets = useMemo(() => {
+  const sortedFormatBuckets = useMemo(() => {
     return sortFormatBuckets(discoveredFormatBuckets);
   }, [discoveredFormatBuckets]);
+
+  const sortedTypeBuckets = useMemo(() => {
+    return sortTypeBuckets(discoveredTypeBuckets);
+  }, [discoveredTypeBuckets]);
 
   const filteredGroups = useMemo(
     () => searchPage.groups.filter(groupMatchesFilters),
@@ -579,24 +630,29 @@ export default function App() {
             {isSearching ? '...' : 'Search'}
           </button>
         </div>
-        {sortedBuckets.length > 0 && (
-          <div className="flex flex-wrap items-center gap-5 text-sm text-gray-300">
-            {sortedBuckets.map((bucket) => (
-              <label key={bucket} className="inline-flex items-center gap-2 select-none">
-                <input
-                  type="checkbox"
-                  checked={formatFilters[bucket] ?? true}
-                  onChange={(e) =>
-                    setFormatFilters((prev) => ({
-                      ...prev,
-                      [bucket]: e.target.checked,
-                    }))
-                  }
-                  className="accent-vinyl-accent"
-                />
-                {bucket}
-              </label>
-            ))}
+        {(sortedFormatBuckets.length > 0 || sortedTypeBuckets.length > 0) && (
+          <div className="flex flex-wrap items-center gap-3">
+            {sortedFormatBuckets.length > 0 && (
+              <FilterDropdown
+                label="Format"
+                options={sortedFormatBuckets}
+                isSelected={isFormatBucketChecked}
+                onToggle={(bucket, checked) =>
+                  setFormatFilters((prev) => ({ ...prev, [bucket]: checked }))
+                }
+              />
+            )}
+            {sortedTypeBuckets.length > 0 && (
+              <FilterDropdown
+                label="Type"
+                options={sortedTypeBuckets}
+                isSelected={isTypeBucketChecked}
+                onToggle={(bucket, checked) =>
+                  setTypeFilters((prev) => ({ ...prev, [bucket]: checked }))
+                }
+                accentClassName="border-l-2 border-l-blue-500/60"
+              />
+            )}
           </div>
         )}
       </div>
@@ -769,7 +825,7 @@ export default function App() {
 
       {!isSearching && searchQuery && searchPage.total > 0 && filteredGroups.length === 0 && (
         <div className="text-center text-gray-500 mt-10">
-          {`${searchPage.groups.length} release group${searchPage.groups.length === 1 ? '' : 's'} found on this page, but none match your selected formats above.`}
+          {`${searchPage.groups.length} release group${searchPage.groups.length === 1 ? '' : 's'} found on this page, but none match your selected filters above.`}
         </div>
       )}
 
