@@ -2,14 +2,16 @@
 
 Scope is expanded to include better pagination and estimation for existing search, plus incremental infinite-scroll-style loading and configurable results per load from 5 to 25.
 
+**Background:** `server/routes/search.ts` was refactored (see `musicbrainz-data-model.md`) to search MusicBrainz's release-group endpoint directly instead of scanning individual releases. That refactor is this plan's backend foundation — `collectDiscoverPage`/`fetchFilteredReleaseGroupPage` already take `pageSize` as a plain parameter and paginate via offset+limit rather than discrete "pages," so steps 2, 5, 8, 9, and 11 below need little to no backend rework. Read `musicbrainz-data-model.md` first for the hierarchy and field reference this plan's search-mode/artist-strictness work will build on.
+
 **Steps**
 
 1. Add pagination and estimation contract updates across API/client models.
 2. Extend grouped search request to include searchMode, formats, pageSize, and optional artist strictness setting.
 3. Extend grouped search response metadata to consistently include total, hasMore, isTotalExact, plus optional estimation diagnostics for UI messaging.
 4. Keep release-group card result shape unchanged for both existing search and artist search.
-5. Improve backend pagination logic to support page size range 5–25 and preserve filtered-first paging truthfulness.
-6. Update scan-budget heuristics to scale with requested page size and depth so larger page sizes do not degrade estimation quality.
+5. Improve backend pagination logic to support page size range 5–25 and preserve paging truthfulness, now that filtering happens via per-candidate release-group format lookups (`fetchReleasesByGroupId`) rather than release-level scanning.
+6. Confirm the raw-batch retry-round cap (currently 3, introduced in the release-group-primary refactor — see `musicbrainz-data-model.md`) still gives good filtered-page-fill behavior across the 5–25 page size range; the old "scan budget" concept this step used to reference no longer exists.
 7. Keep hasMore authoritative in progressive mode; only mark exact totals when scan completion is truly reached.
 8. Replace Prev/Next UI with incremental load-more flow: users scroll, reach bottom, and trigger More results to append the next slice smoothly.
 9. Add a results-per-load control in Discover with values 5–25, persist it locally, and restart search from page 1 when changed.
@@ -19,7 +21,7 @@ Scope is expanded to include better pagination and estimation for existing searc
 
 **Relevant files**
 
-- c:/Code/sleevesnap/server/routes/search.ts — page size validation, scan budget scaling, estimation metadata semantics, filtered paging.
+- c:/Code/sleevesnap/server/routes/search.ts — page size validation; page-size parameterization of `collectDiscoverPage`/`fetchFilteredReleaseGroupPage`; retry-round-cap tuning; estimation metadata semantics.
 - c:/Code/sleevesnap/server/routes/search.test.ts — regression tests for 5–25 page size range and progressive estimation behavior.
 - c:/Code/sleevesnap/server/scripts/debugSearchPagination.ts — diagnostics for mode, formats, page size, and metadata progression.
 - c:/Code/sleevesnap/types.ts — request/response model updates for pagination and estimation.

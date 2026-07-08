@@ -7,9 +7,11 @@ const DEFAULT_GROUP_PAGE_SIZE = 5;
 const MAX_GROUP_PAGE_SIZE = 5;
 const RELEASE_LIMIT_PER_GROUP = 100;
 const FLAT_SEARCH_LIMIT = 15;
-const RELEASE_SEARCH_BATCH_SIZE = 100;
-const MAX_RELEASES_TO_SCAN = 3000;
-const MIN_RELEASES_TO_SCAN = 800;
+// How many raw release-group batches (each `pageSize` candidates) to try
+// before giving up and returning a short, honestly-marked-inexact page.
+// Scales naturally with pageSize since each round already requests
+// `pageSize` candidates — no separate scan-budget bookkeeping needed.
+const MAX_RAW_BATCHES_PER_PAGE = 3;
 
 type SearchFormat = 'vinyl' | 'cd';
 
@@ -46,12 +48,29 @@ interface MusicBrainzReleaseGroupDetailsResponse {
   relations?: MusicBrainzUrlRelation[];
 }
 
-interface AggregatedSearchGroup {
+interface MusicBrainzReleaseGroupSearchResult {
+  id: string;
+  title: string;
+  'first-release-date'?: string;
+  'primary-type'?: string;
+  'artist-credit'?: MusicBrainzArtistCredit[];
+}
+
+interface MusicBrainzReleaseGroupSearchResponse {
+  count?: number;
+  offset?: number;
+  'release-groups'?: MusicBrainzReleaseGroupSearchResult[];
+}
+
+interface CandidateReleaseGroup {
   releaseGroupId: string;
   title: string;
   artist: string;
   firstReleaseDate?: string;
   releaseGroupUrl: string;
+}
+
+interface FilteredReleaseGroup extends CandidateReleaseGroup {
   thumbnailUrl?: string;
   availableFormats: string[];
   totalReleases: number;
@@ -163,37 +182,20 @@ searchRouter.post('/groups', async (req, res) => {
       return;
     }
 
-    const targetGroupsNeeded = safePage * safePageSize + 1;
-    const maxReleasesToScan = getReleaseScanLimit(targetGroupsNeeded);
-
-    const groupedResult = await collectFilteredReleaseGroups(
-      query,
-      appName,
-      selectedFormats,
-      targetGroupsNeeded,
-      maxReleasesToScan,
-    );
-
-    const start = (safePage - 1) * safePageSize;
-    const end = start + safePageSize;
-    const pageGroups = groupedResult.groups.slice(start, end);
+    const discoverPage = await collectDiscoverPage(query, appName, selectedFormats, safePage, safePageSize);
 
     const groups = await Promise.all(
-      pageGroups.map(async (group) => ({
+      discoverPage.groups.map(async (group) => ({
         ...group,
         discogsMasterUrl: await fetchReleaseGroupDiscogsMasterUrl(group.releaseGroupId, appName),
       })),
     );
 
-    const hasMore = groupedResult.isComplete
-      ? end < groupedResult.groups.length
-      : true;
-
     logEvent('search', requestId, 'Discover search results', {
       resultCount: groups.length,
-      totalKnown: groupedResult.groups.length,
-      isTotalExact: groupedResult.isComplete,
-      hasMore,
+      total: discoverPage.total,
+      isTotalExact: discoverPage.isTotalExact,
+      hasMore: discoverPage.hasMore,
       top: groups.slice(0, 3).map((g) => `${g.artist} - ${g.title}`),
       ms: Date.now() - startedAt,
     });
@@ -202,9 +204,9 @@ searchRouter.post('/groups', async (req, res) => {
       query,
       page: safePage,
       pageSize: safePageSize,
-      total: groupedResult.groups.length,
-      hasMore,
-      isTotalExact: groupedResult.isComplete,
+      total: discoverPage.total,
+      hasMore: discoverPage.hasMore,
+      isTotalExact: discoverPage.isTotalExact,
       groups,
     });
   } catch (err) {
@@ -282,150 +284,114 @@ function normalizeRequestedFormats(rawFormats: string[] | undefined): SearchForm
   return Array.from(unique);
 }
 
-function getReleaseScanLimit(targetGroupsNeeded: number): number {
-  const computed = targetGroupsNeeded * 120;
-  return Math.min(MAX_RELEASES_TO_SCAN, Math.max(MIN_RELEASES_TO_SCAN, computed));
-}
-
-async function collectFilteredReleaseGroups(
+/**
+ * Fetches release-groups matching `query` at MusicBrainz's own offset, then
+ * enriches only the raw candidates needed (bounded batches of `pageSize`,
+ * up to MAX_RAW_BATCHES_PER_PAGE rounds) to determine each one's available
+ * formats — reusing the existing `fetchReleasesByGroupId` ("expand
+ * releases") lookup rather than scanning individual releases. Candidates
+ * with no release matching `selectedFormats` are dropped; if that drops
+ * survivors below `pageSize`, the next raw batch is fetched to top up the
+ * page, capped at MAX_RAW_BATCHES_PER_PAGE rounds total.
+ */
+async function fetchFilteredReleaseGroupPage(
   query: string,
   appName: string,
   selectedFormats: SearchFormat[],
-  targetGroupsNeeded: number,
-  maxReleasesToScan: number,
-): Promise<{ groups: AggregatedSearchGroup[]; isComplete: boolean }> {
-  const normalizedQuery = normalizeSearchInput(query);
-  const exactQuery = buildExactSearchQuery(normalizedQuery);
+  offset: number,
+  pageSize: number,
+): Promise<{ groups: FilteredReleaseGroup[]; rawCount: number; exhausted: boolean; hitRetryCap: boolean }> {
+  const survivors: FilteredReleaseGroup[] = [];
+  let currentOffset = offset;
+  let rawCount = 0;
+  let exhausted = false;
+  let rounds = 0;
 
-  const exactResult = await collectFilteredReleaseGroupsByReleaseQuery(
-    exactQuery,
-    appName,
-    selectedFormats,
-    targetGroupsNeeded,
-    maxReleasesToScan,
-  );
+  while (survivors.length < pageSize && rounds < MAX_RAW_BATCHES_PER_PAGE) {
+    rounds += 1;
+    const response = await fetchReleaseGroupsByQuery(query, appName, pageSize, currentOffset);
+    rawCount = response.count ?? rawCount;
+    const rawBatch = response['release-groups'] ?? [];
 
-  if (exactResult.groups.length >= targetGroupsNeeded || !normalizedQuery.includes(' ')) {
-    return exactResult;
+    if (rawBatch.length === 0) {
+      exhausted = true;
+      break;
+    }
+
+    const candidates = rawBatch.map(mapReleaseGroupCandidate);
+    const enriched = await Promise.all(
+      candidates.map((candidate) => enrichCandidateWithFormats(candidate, appName, selectedFormats)),
+    );
+
+    for (const group of enriched) {
+      if (group) survivors.push(group);
+    }
+
+    currentOffset += rawBatch.length;
+    if (currentOffset >= rawCount) {
+      exhausted = true;
+      break;
+    }
   }
-
-  const fallbackQuery = buildFallbackSearchQuery(normalizedQuery);
-  if (fallbackQuery === exactQuery) {
-    return exactResult;
-  }
-
-  const fallbackResult = await collectFilteredReleaseGroupsByReleaseQuery(
-    fallbackQuery,
-    appName,
-    selectedFormats,
-    targetGroupsNeeded,
-    maxReleasesToScan,
-  );
 
   return {
-    groups: mergeAggregatedGroups(exactResult.groups, fallbackResult.groups),
-    isComplete: exactResult.isComplete && fallbackResult.isComplete,
+    groups: survivors.slice(0, pageSize),
+    rawCount,
+    exhausted,
+    hitRetryCap: rounds >= MAX_RAW_BATCHES_PER_PAGE && survivors.length < pageSize,
   };
 }
 
-async function collectFilteredReleaseGroupsByReleaseQuery(
-  releaseQuery: string,
+/**
+ * Resolves one page of the Discover search. Tries the exact-phrase query
+ * first, using MusicBrainz's own exact `count` for true cursor pagination
+ * (no scanning). Only once the requested offset is entirely past the exact
+ * query's results does it switch — wholesale, at a disjoint offset — to the
+ * broader fallback (AND-of-terms) query, so pages never straddle both
+ * queries and can never show the same release-group twice.
+ */
+async function collectDiscoverPage(
+  query: string,
   appName: string,
   selectedFormats: SearchFormat[],
-  targetGroupsNeeded: number,
-  maxReleasesToScan: number,
-): Promise<{ groups: AggregatedSearchGroup[]; isComplete: boolean }> {
-  const grouped = new Map<
-    string,
-    {
-      releaseGroupId: string;
-      title: string;
-      artist: string;
-      firstReleaseDate?: string;
-      releaseGroupUrl: string;
-      thumbnailUrl?: string;
-      totalReleases: number;
-      availableFormats: Set<string>;
-    }
-  >();
+  page: number,
+  pageSize: number,
+): Promise<{ groups: FilteredReleaseGroup[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
+  const normalizedQuery = normalizeSearchInput(query);
+  const exactQuery = buildExactSearchQuery(normalizedQuery);
+  const offset = (page - 1) * pageSize;
 
-  let offset = 0;
-  let totalReleases = Number.POSITIVE_INFINITY;
-  let scanned = 0;
+  const exactPage = await fetchFilteredReleaseGroupPage(exactQuery, appName, selectedFormats, offset, pageSize);
+  const exactTotal = exactPage.rawCount;
 
-  while (
-    scanned < maxReleasesToScan &&
-    grouped.size < targetGroupsNeeded &&
-    offset < totalReleases
-  ) {
-    const limit = Math.min(RELEASE_SEARCH_BATCH_SIZE, maxReleasesToScan - scanned);
-    const releaseResponse = await fetchReleasesByQuery(releaseQuery, appName, limit, offset);
-    totalReleases = releaseResponse.count ?? totalReleases;
-    const releases = releaseResponse.releases ?? [];
+  const canUseFallback = normalizedQuery.includes(' ');
+  const fallbackQuery = canUseFallback ? buildFallbackSearchQuery(normalizedQuery) : exactQuery;
+  const hasDistinctFallback = canUseFallback && fallbackQuery !== exactQuery;
 
-    if (releases.length === 0) {
-      totalReleases = Math.min(totalReleases, offset);
-      break;
-    }
+  if (offset >= exactTotal && hasDistinctFallback) {
+    const fallbackOffset = offset - exactTotal;
+    const fallbackPage = await fetchFilteredReleaseGroupPage(
+      fallbackQuery,
+      appName,
+      selectedFormats,
+      fallbackOffset,
+      pageSize,
+    );
+    const total = exactTotal + fallbackPage.rawCount;
+    const isTotalExact = !fallbackPage.hitRetryCap;
+    const hasMore = isTotalExact ? fallbackOffset + fallbackPage.groups.length < fallbackPage.rawCount : true;
 
-    for (const release of releases) {
-      const mapped = mapRelease(release);
-
-      if (!mapped.releaseGroupId || !matchesRequestedFormat(mapped.format, selectedFormats)) {
-        continue;
-      }
-
-      const existing = grouped.get(mapped.releaseGroupId);
-      if (!existing) {
-        grouped.set(mapped.releaseGroupId, {
-          releaseGroupId: mapped.releaseGroupId,
-          title: mapped.releaseGroupTitle ?? mapped.title,
-          artist: mapped.artist,
-          firstReleaseDate: mapped.releaseDate,
-          releaseGroupUrl: mapped.releaseGroupUrl ?? `https://musicbrainz.org/release-group/${mapped.releaseGroupId}`,
-          thumbnailUrl: mapped.thumbnailUrl,
-          totalReleases: 1,
-          availableFormats: new Set(mapped.format ? [mapped.format] : []),
-        });
-        continue;
-      }
-
-      existing.totalReleases += 1;
-      if (mapped.format) {
-        existing.availableFormats.add(mapped.format);
-      }
-      if (!existing.firstReleaseDate || isEarlierDate(mapped.releaseDate, existing.firstReleaseDate)) {
-        existing.firstReleaseDate = mapped.releaseDate;
-      }
-      if (!existing.thumbnailUrl && mapped.thumbnailUrl) {
-        existing.thumbnailUrl = mapped.thumbnailUrl;
-      }
-    }
-
-    scanned += releases.length;
-    offset += releases.length;
-
-    if (releases.length < limit) {
-      totalReleases = Math.min(totalReleases, offset);
-      break;
-    }
+    return { groups: fallbackPage.groups, total, isTotalExact, hasMore };
   }
 
-  const isComplete = offset >= totalReleases;
+  // If the exact query naturally ran out at this page boundary but a
+  // fallback exists that we haven't queried yet, the total isn't the full
+  // picture — mark it inexact rather than claiming a false certainty.
+  const isTotalExact = !exactPage.hitRetryCap && !(exactPage.exhausted && hasDistinctFallback);
+  const exactHasMore = offset + exactPage.groups.length < exactTotal;
+  const hasMore = isTotalExact ? exactHasMore : true;
 
-  return {
-    groups: Array.from(grouped.values()).map((group) => ({
-      releaseGroupId: group.releaseGroupId,
-      title: group.title,
-      artist: group.artist,
-      firstReleaseDate: group.firstReleaseDate,
-      releaseGroupUrl: group.releaseGroupUrl,
-      thumbnailUrl: group.thumbnailUrl,
-      totalReleases: group.totalReleases,
-      availableFormats: Array.from(group.availableFormats),
-    })),
-    isComplete,
-  };
+  return { groups: exactPage.groups, total: exactTotal, isTotalExact, hasMore };
 }
 
 function matchesRequestedFormat(format: string | undefined, selectedFormats: SearchFormat[]): boolean {
@@ -438,48 +404,6 @@ function matchesRequestedFormat(format: string | undefined, selectedFormats: Sea
     (wantsVinyl && /vinyl|\blp\b/.test(lower)) ||
     (wantsCd && /\bcd\b/.test(lower))
   );
-}
-
-function isEarlierDate(candidate: string | undefined, existing: string | undefined): boolean {
-  if (!candidate) return false;
-  if (!existing) return true;
-  return candidate < existing;
-}
-
-function mergeAggregatedGroups(
-  primary: AggregatedSearchGroup[],
-  secondary: AggregatedSearchGroup[],
-): AggregatedSearchGroup[] {
-  const merged = new Map<string, AggregatedSearchGroup>();
-
-  const upsert = (group: AggregatedSearchGroup) => {
-    const existing = merged.get(group.releaseGroupId);
-    if (!existing) {
-      merged.set(group.releaseGroupId, {
-        ...group,
-        availableFormats: Array.from(new Set(group.availableFormats)),
-      });
-      return;
-    }
-
-    const combinedFormats = Array.from(new Set([...existing.availableFormats, ...group.availableFormats]));
-
-    merged.set(group.releaseGroupId, {
-      ...existing,
-      firstReleaseDate:
-        !existing.firstReleaseDate || isEarlierDate(group.firstReleaseDate, existing.firstReleaseDate)
-          ? group.firstReleaseDate ?? existing.firstReleaseDate
-          : existing.firstReleaseDate,
-      thumbnailUrl: existing.thumbnailUrl ?? group.thumbnailUrl,
-      totalReleases: Math.max(existing.totalReleases, group.totalReleases),
-      availableFormats: combinedFormats,
-    });
-  };
-
-  for (const group of primary) upsert(group);
-  for (const group of secondary) upsert(group);
-
-  return Array.from(merged.values());
 }
 
 async function fetchReleasesByText(
@@ -518,6 +442,76 @@ async function fetchReleasesByQuery(
   }
 
   return (await res.json()) as MusicBrainzSearchResponse;
+}
+
+async function fetchReleaseGroupsByQuery(
+  query: string,
+  appName: string,
+  limit: number,
+  offset: number,
+): Promise<MusicBrainzReleaseGroupSearchResponse> {
+  const url = new URL('https://musicbrainz.org/ws/2/release-group');
+  url.searchParams.set('query', query);
+  url.searchParams.set('fmt', 'json');
+  url.searchParams.set('type', 'album');
+  url.searchParams.set('limit', String(limit));
+  url.searchParams.set('offset', String(offset));
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      'User-Agent': `${appName}/1.0 (https://github.com/sol3uk/sleevesnap)`,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(8000),
+  });
+
+  if (!res.ok) {
+    throw new Error(`MusicBrainz release-group search failed (${res.status})`);
+  }
+
+  return (await res.json()) as MusicBrainzReleaseGroupSearchResponse;
+}
+
+/** Maps a raw release-group search hit into the shape used by the bounded-retry filtering pipeline. */
+function mapReleaseGroupCandidate(rg: MusicBrainzReleaseGroupSearchResult): CandidateReleaseGroup {
+  return {
+    releaseGroupId: rg.id,
+    title: rg.title,
+    artist: getArtistName(rg['artist-credit']),
+    firstReleaseDate: rg['first-release-date'],
+    releaseGroupUrl: `https://musicbrainz.org/release-group/${rg.id}`,
+  };
+}
+
+/**
+ * Fetches a candidate release-group's full release list (reusing the same
+ * lookup the "expand releases" endpoint uses) to determine which formats it
+ * has available. Returns `undefined` if none of its releases match
+ * `selectedFormats` — the caller drops these candidates from the page.
+ */
+async function enrichCandidateWithFormats(
+  candidate: CandidateReleaseGroup,
+  appName: string,
+  selectedFormats: SearchFormat[],
+): Promise<FilteredReleaseGroup | undefined> {
+  const releases = await fetchReleasesByGroupId(candidate.releaseGroupId, appName);
+  const mapped = releases.map((release) => mapRelease(release, candidate.releaseGroupId));
+  const matching = mapped.filter((release) => matchesRequestedFormat(release.format, selectedFormats));
+
+  if (matching.length === 0) {
+    return undefined;
+  }
+
+  const availableFormats = Array.from(
+    new Set(matching.map((release) => release.format).filter((format): format is string => Boolean(format))),
+  );
+
+  return {
+    ...candidate,
+    thumbnailUrl: `https://coverartarchive.org/release-group/${candidate.releaseGroupId}/front-250`,
+    availableFormats,
+    totalReleases: matching.length,
+  };
 }
 
 async function fetchReleasesByGroupId(
