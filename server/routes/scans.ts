@@ -130,12 +130,19 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
       source: capturedImage ? 'captured photo' : providedCoverUrl ? 'search result' : 'unknown',
     });
 
-    // Deduplicate by artist + title (case-insensitive)
-    const existing = db
-      .prepare(
-        'SELECT * FROM collection WHERE lower(artist) = lower(?) AND lower(title) = lower(?)',
-      )
-      .get(artist, title) as CollectionRow | undefined;
+    // Deduplicate by musicBrainzId when present (a specific pressing/
+    // edition), so a collector can save both an original pressing and a
+    // later reissue of the same album — falls back to artist+title only
+    // when neither record has a musicBrainzId to compare.
+    const existing = (
+      musicBrainzId
+        ? db.prepare('SELECT * FROM collection WHERE musicbrainz_id = ?').get(musicBrainzId)
+        : db
+            .prepare(
+              'SELECT * FROM collection WHERE lower(artist) = lower(?) AND lower(title) = lower(?) AND musicbrainz_id IS NULL',
+            )
+            .get(artist, title)
+    ) as CollectionRow | undefined;
 
     if (existing) {
       logEvent('scans', requestId, 'Save skipped — already in collection', { recordId: existing.id });

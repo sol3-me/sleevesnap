@@ -61,7 +61,10 @@ collectionRouter.get('/', (_req, res) => {
   res.json(rows.map(rowToRecord));
 });
 
-// POST /api/collection  – add a record (deduplicates by artist + title)
+// POST /api/collection  – add a record. Deduplicates by musicBrainzId when
+// present (a specific pressing/edition), so a collector can own both an
+// original pressing and a later reissue of the same album — falls back to
+// artist+title only when neither record has a musicBrainzId to compare.
 collectionRouter.post('/', (req, res) => {
   const {
     id,
@@ -91,11 +94,13 @@ collectionRouter.post('/', (req, res) => {
     return;
   }
 
-  const existing = db
-    .prepare(
-      'SELECT id FROM collection WHERE lower(artist) = lower(?) AND lower(title) = lower(?)',
-    )
-    .get(artist, title);
+  const existing = musicBrainzId
+    ? db.prepare('SELECT id FROM collection WHERE musicbrainz_id = ?').get(musicBrainzId)
+    : db
+        .prepare(
+          'SELECT id FROM collection WHERE lower(artist) = lower(?) AND lower(title) = lower(?) AND musicbrainz_id IS NULL',
+        )
+        .get(artist, title);
 
   if (existing) {
     res.status(409).json({ error: 'Record already in collection' });
