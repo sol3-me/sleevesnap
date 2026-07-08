@@ -12,11 +12,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Real /ws/2/release-group search responses for "queens of the stone age",
 // captured live at offset 0/5/10 (limit=5 each), plus a consolidated map of
 // real /ws/2/release?query=rgid:X responses (format info) for every
-// candidate release-group id appearing across those three pages. Together
-// these reproduce a genuine real-world case: only 2 of the first 15
-// candidate release-groups have any vinyl release (most of the rest are
-// digital-only tribute/parody releases) — a faithful regression fixture for
-// the release-group-primary search refactor.
+// candidate release-group id appearing across those three pages. Several of
+// these candidates are digital-only tribute/parody releases with no vinyl or
+// CD edition — real MusicBrainz data used to prove that Discover search
+// returns every candidate unfiltered, each enriched with its real formats,
+// rather than dropping the ones that don't have a physical release.
 function loadRgFixture(name: string) {
   return JSON.parse(fs.readFileSync(path.join(__dirname, '__fixtures__', name), 'utf-8'));
 }
@@ -29,10 +29,11 @@ const rgReleasesById = loadRgFixture('release-group-releases-by-id-qotsa-real.js
 // Real "Laminated Denim" case: exactly 1 release-group matches (both the
 // exact-phrase and fallback AND-of-terms queries return the same single
 // group), and its only 2 releases are both Digital Media — no vinyl or CD
-// release exists for this album at all. This reproduces a real report: the
-// UI showed "1+ matching release groups loaded" while the results list and
-// "shown on this page" count were 0 — a genuine discrepancy between the
-// reported total and what's actually displayable under the selected formats.
+// release exists for this album at all. This is the real report that started
+// the client-side-filtering pivot: MusicBrainz's format data is incomplete
+// (the user owns an actual vinyl pressing of this album), so Discover search
+// must surface the release-group regardless, enriched with whatever real
+// format data MusicBrainz does have, rather than silently hiding it.
 const laminatedDenimExact = loadRgFixture('release-group-search-laminated-denim-real.json');
 const laminatedDenimFallback = loadRgFixture('release-group-search-laminated-denim-fallback-real.json');
 const laminatedDenimReleases = loadRgFixture('release-releases-by-group-laminated-denim-real.json');
@@ -314,11 +315,10 @@ test('POST /api/search/groups queries the release-group endpoint directly with t
             typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const url = new URL(target);
         if (url.pathname === '/ws/2/release-group') {
-            // Only the first call is the exact-phrase query this test cares
-            // about — the format-matching candidate found here exhausts the
-            // exact query's single result, so the page then tops itself up
-            // from the fallback query too (a second, later call).
-            if (!capturedUrl) capturedUrl = url;
+            // Nothing is filtered anymore, so a single matching candidate
+            // (count: 1) never needs a follow-up fallback call — this is the
+            // only call to /ws/2/release-group this test expects.
+            capturedUrl = url;
             return jsonResponse({ count: 1, 'release-groups': [
                 {
                     id: 'g1',
@@ -355,7 +355,6 @@ test('POST /api/search/groups queries the release-group endpoint directly with t
             query: 'Rated R',
             page: 1,
             pageSize: 5,
-            formats: ['vinyl'],
         });
 
         assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
@@ -371,39 +370,7 @@ test('POST /api/search/groups queries the release-group endpoint directly with t
     }
 });
 
-test('POST /api/search/groups fills a full page from the first raw batch when enough candidates match (real data)', async () => {
-    globalThis.fetch = mockReleaseGroupEndpoints();
-
-    const { server, port } = await startTestServer();
-
-    try {
-        const res = await requestJson(port, '/api/search/groups', 'POST', {
-            query: 'queens of the stone age',
-            page: 1,
-            pageSize: 5,
-            formats: ['vinyl', 'cd'],
-        });
-
-        assert.equal(res.statusCode, 200);
-        assert.equal(res.json.total, 96);
-        assert.equal(res.json.isTotalExact, true);
-        assert.equal(res.json.hasMore, true);
-        assert.deepEqual(
-            res.json.groups.map((g: { releaseGroupId: string }) => g.releaseGroupId),
-            [
-                '17ee0d7f-4a9d-317f-a0b0-8ca528a34b19', // Queens of the Stone Age (vinyl)
-                '351ed669-d97b-4b2e-80c2-e9c504992c13', // Kyuss / Queens of the Stone Age (CD)
-                '95335849-2536-344f-acb6-0424c7d56411', // Queens of the Stone Age / Beaver (vinyl)
-                '1893cf55-0a80-4465-890b-6da7db246f0e', // Uncovered Queens of the Stone Age (CD)
-                'd6657084-d471-3b6a-9b6d-17621da96cdb', // Lullaby Renditions of Queens of the Stone Age (CD)
-            ],
-        );
-    } finally {
-        await closeServer(server);
-    }
-});
-
-test('POST /api/search/groups excludes format-mismatched candidates and gives up gracefully after the retry cap (real data)', async () => {
+test('POST /api/search/groups returns every raw candidate from the batch, unfiltered, each enriched with its real (unfiltered) formats (real data)', async () => {
     let releaseGroupSearchCalls = 0;
     const baseFetch = mockReleaseGroupEndpoints();
     globalThis.fetch = (async (input, init) => {
@@ -416,28 +383,49 @@ test('POST /api/search/groups excludes format-mismatched candidates and gives up
     const { server, port } = await startTestServer();
 
     try {
-        // Vinyl-only: of the 15 real candidates across pages 1-3 (offsets
-        // 0/5/10), only 2 have any vinyl release — the rest are digital-only
-        // tribute/parody releases. This should exhaust all 3 retry rounds and
-        // still come back with just those 2, honestly marked as inexact.
         const res = await requestJson(port, '/api/search/groups', 'POST', {
             query: 'queens of the stone age',
             page: 1,
             pageSize: 5,
-            formats: ['vinyl'],
         });
 
         assert.equal(res.statusCode, 200);
-        assert.equal(res.json.isTotalExact, false);
+        assert.equal(res.json.total, 96);
+        assert.equal(res.json.isTotalExact, true);
         assert.equal(res.json.hasMore, true);
-        assert.deepEqual(
-            res.json.groups.map((g: { releaseGroupId: string }) => g.releaseGroupId),
-            [
-                '17ee0d7f-4a9d-317f-a0b0-8ca528a34b19', // Queens of the Stone Age
-                '95335849-2536-344f-acb6-0424c7d56411', // Queens of the Stone Age / Beaver
-            ],
+        // Exactly one raw batch is fetched — no retry rounds are needed
+        // anymore since nothing gets filtered out and re-fetched to top up.
+        assert.equal(releaseGroupSearchCalls, 1);
+
+        const byId = new Map(
+            res.json.groups.map((g: { releaseGroupId: string }) => [g.releaseGroupId, g]),
         );
-        assert.equal(releaseGroupSearchCalls, 3, 'should stop after exactly 3 raw-batch rounds');
+        assert.deepEqual([...byId.keys()], [
+            '17ee0d7f-4a9d-317f-a0b0-8ca528a34b19', // Queens of the Stone Age
+            '351ed669-d97b-4b2e-80c2-e9c504992c13', // Kyuss / Queens of the Stone Age
+            '95335849-2536-344f-acb6-0424c7d56411', // Queens of the Stone Age / Beaver
+            '1893cf55-0a80-4465-890b-6da7db246f0e', // Uncovered Queens of the Stone Age
+            'd6657084-d471-3b6a-9b6d-17621da96cdb', // Lullaby Renditions of Queens of the Stone Age
+        ]);
+
+        // totalReleases now counts every release in the group (was a
+        // format-filtered count before) and availableFormats reports every
+        // real format found, including ones that don't match any particular
+        // checkbox — e.g. "Digital Media" here, which the old server-side
+        // filter would have silently dropped from the set.
+        const qotsa = byId.get('17ee0d7f-4a9d-317f-a0b0-8ca528a34b19') as {
+            totalReleases: number;
+            availableFormats: string[];
+        };
+        assert.equal(qotsa.totalReleases, 17);
+        assert.deepEqual(qotsa.availableFormats, ['CD', '12" Vinyl', 'Digital Media']);
+
+        const kyuss = byId.get('351ed669-d97b-4b2e-80c2-e9c504992c13') as {
+            totalReleases: number;
+            availableFormats: string[];
+        };
+        assert.equal(kyuss.totalReleases, 2);
+        assert.deepEqual(kyuss.availableFormats, ['CD']);
     } finally {
         await closeServer(server);
     }
@@ -509,7 +497,6 @@ test('POST /api/search/groups switches to the fallback query at the correct disj
             query: 'tiny rare album',
             page: 2,
             pageSize: 5,
-            formats: ['vinyl'],
         });
 
         assert.equal(res.statusCode, 200);
@@ -522,7 +509,7 @@ test('POST /api/search/groups switches to the fallback query at the correct disj
     }
 });
 
-test('POST /api/search/groups never reports a total higher than the groups actually returned (real Laminated Denim data)', async () => {
+test('POST /api/search/groups returns Laminated Denim even though MusicBrainz has no vinyl/CD release for it — formats are enriched, never used to hide results (real data)', async () => {
     globalThis.fetch = (async (input) => {
         const target =
             typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -548,50 +535,20 @@ test('POST /api/search/groups never reports a total higher than the groups actua
     const { server, port } = await startTestServer();
 
     try {
-        // Both formats selected: the album's only 2 releases are Digital
-        // Media, so neither matches vinyl or CD. The one matching
-        // release-group should be reported as zero results, not "1+".
         const res = await requestJson(port, '/api/search/groups', 'POST', {
             query: 'Laminated Denim',
             page: 1,
             pageSize: 5,
-            formats: ['vinyl', 'cd'],
         });
 
         assert.equal(res.statusCode, 200);
-        assert.equal(res.json.groups.length, res.json.total, 'total must equal the number of groups actually returned');
-        assert.equal(res.json.total, 0);
-        assert.equal(res.json.hasMore, false);
+        assert.equal(res.json.total, 1);
         assert.equal(res.json.isTotalExact, true);
-        assert.deepEqual(res.json.groups, []);
-    } finally {
-        await closeServer(server);
-    }
-});
-
-test('POST /api/search/groups returns empty page when no formats are selected', async () => {
-    let fetchCalls = 0;
-    globalThis.fetch = (async () => {
-        fetchCalls += 1;
-        return jsonResponse({ error: 'unexpected request' }, 500);
-    }) as typeof fetch;
-
-    const { server, port } = await startTestServer();
-
-    try {
-        const res = await requestJson(port, '/api/search/groups', 'POST', {
-            query: 'Rated R',
-            page: 1,
-            pageSize: 5,
-            formats: [],
-        });
-
-        assert.equal(res.statusCode, 200);
-        assert.equal(res.json.total, 0);
         assert.equal(res.json.hasMore, false);
-        assert.equal(res.json.isTotalExact, true);
-        assert.deepEqual(res.json.groups, []);
-        assert.equal(fetchCalls, 0);
+        assert.equal(res.json.groups.length, 1);
+        assert.equal(res.json.groups[0].releaseGroupId, '5e2fb12b-ab85-4fe7-be3c-48687f104502');
+        assert.deepEqual(res.json.groups[0].availableFormats, ['Digital Media']);
+        assert.equal(res.json.groups[0].totalReleases, 2);
     } finally {
         await closeServer(server);
     }
