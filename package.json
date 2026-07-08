@@ -7,7 +7,7 @@
 		"dev": "vite",
 		"dev:server": "tsx watch server/index.ts",
 		"build": "vite build && tsc -p tsconfig.server.json",
-		"test": "npm run test:search && npm run test:scan && npm run test:scans && npm run test:collection && npm run test:vision && npm run test:db && npm run test:rate-limits && npm run test:vinyl-service",
+		"test": "npm run test:search && npm run test:scan && npm run test:scans && npm run test:collection && npm run test:vision && npm run test:db && npm run test:rate-limits && npm run test:vinyl-service && npm run test:filters",
 		"test:search": "tsx --test server/routes/search.test.ts",
 		"test:scan": "tsx --test server/routes/scan.test.ts",
 		"test:scans": "tsx --test server/routes/scans.test.ts",
@@ -16,11 +16,14 @@
 		"test:db": "tsx --test server/db.test.ts",
 		"test:rate-limits": "tsx --test server/rateLimiters.test.ts",
 		"test:vinyl-service": "tsx --test services/vinylService.test.ts",
+		"test:filters": "tsx --test lib/filters.test.ts",
 		"preview": "vite preview",
 		"start": "node dist-server/index.js"
 	},
 	"dependencies": {
 		"@tailwindcss/vite": "^4.3.2",
+		"@tanstack/react-query": "5.101.2",
+		"@tanstack/react-router": "1.170.17",
 		"better-sqlite3": "^12.8.0",
 		"cors": "^2.8.6",
 		"dotenv": "^17.4.2",
