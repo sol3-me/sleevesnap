@@ -7,16 +7,39 @@ import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vi
 import { SearchGroupReleases, SearchResultGroup, SearchResultPage, UserProfile, ViewState, VinylRecord } from './types';
 
 const SEARCH_PAGE_SIZE = 5;
-const SEARCH_FILTERS_KEY = 'sleevesnap:search-filters:v1';
+const SEARCH_FILTERS_KEY = 'sleevesnap:search-filters:v2';
 const COLLECTION_CARD_SIZE_KEY = 'sleevesnap:collection-card-size:v1';
 const COLLECTION_CARD_SIZE_MIN = 180;
 const COLLECTION_CARD_SIZE_MAX = 360;
 const DEFAULT_COLLECTION_CARD_SIZE = 240;
 
-interface FormatFilters {
-  vinyl: boolean;
-  cd: boolean;
+// Format filtering is client-side (see musicbrainz-data-model.md): the
+// server returns every release-group unfiltered, enriched with its real
+// formats, and these buckets group MusicBrainz's many raw format strings
+// into checkboxes. Anything containing "Vinyl" or "CD" is grouped under one
+// label (12" Vinyl, 10" Vinyl, 2xCD, CD-R, ... are just examples this
+// substring match already catches, not an exhaustive list); everything else
+// (Digital Media, Cassette, Unknown, ...) gets its own checkbox as-is.
+const PRIORITY_FORMAT_BUCKETS = ['Vinyl', 'CD'];
+const KNOWN_FORMAT_BUCKETS: Array<{ name: string; pattern: RegExp }> = [
+  { name: 'Vinyl', pattern: /vinyl|\blp\b/i },
+  { name: 'CD', pattern: /\bcd\b/i },
+];
+
+function bucketForFormat(rawFormat: string): string {
+  const known = KNOWN_FORMAT_BUCKETS.find((bucket) => bucket.pattern.test(rawFormat));
+  return known ? known.name : rawFormat;
 }
+
+function bucketsForGroup(group: SearchResultGroup): string[] {
+  return Array.from(new Set(group.availableFormats.map(bucketForFormat)));
+}
+
+// Sparse: only buckets the user has explicitly toggled are stored. Anything
+// absent (including a bucket never seen before) defaults to checked/visible
+// — the goal is to extract as much signal from MusicBrainz as possible
+// rather than let a gap in its data quietly hide a real result.
+type FormatFilterState = Record<string, boolean>;
 
 const defaultSearchPage: SearchResultPage = {
   query: '',
@@ -28,21 +51,22 @@ const defaultSearchPage: SearchResultPage = {
   groups: [],
 };
 
-function loadStoredFilters(): FormatFilters {
+function loadStoredFormatFilters(): FormatFilterState {
   if (typeof window === 'undefined') {
-    return { vinyl: true, cd: false };
+    return {};
   }
 
   try {
     const raw = window.localStorage.getItem(SEARCH_FILTERS_KEY);
-    if (!raw) return { vinyl: true, cd: false };
-    const parsed = JSON.parse(raw) as Partial<FormatFilters>;
-    return {
-      vinyl: parsed.vinyl ?? true,
-      cd: parsed.cd ?? false,
-    };
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const result: FormatFilterState = {};
+    for (const [bucket, value] of Object.entries(parsed)) {
+      if (typeof value === 'boolean') result[bucket] = value;
+    }
+    return result;
   } catch {
-    return { vinyl: true, cd: false };
+    return {};
   }
 }
 
@@ -63,7 +87,8 @@ export default function App() {
   const [groupReleases, setGroupReleases] = useState<Record<string, SearchGroupReleases>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [loadingGroupIds, setLoadingGroupIds] = useState<Record<string, true>>({});
-  const [formatFilters, setFormatFilters] = useState<FormatFilters>(() => loadStoredFilters());
+  const [formatFilters, setFormatFilters] = useState<FormatFilterState>(() => loadStoredFormatFilters());
+  const [discoveredFormatBuckets, setDiscoveredFormatBuckets] = useState<string[]>([]);
   const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
   const [isSearching, setIsSearching] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
@@ -76,13 +101,6 @@ export default function App() {
   const releasesRef = useRef<Record<string, SearchGroupReleases>>({});
   const loadingRef = useRef<Set<string>>(new Set());
   const highlightedCardRef = useRef<HTMLDivElement>(null);
-
-  const selectedSearchFormats = useMemo<Array<'vinyl' | 'cd'>>(() => {
-    const next: Array<'vinyl' | 'cd'> = [];
-    if (formatFilters.vinyl) next.push('vinyl');
-    if (formatFilters.cd) next.push('cd');
-    return next;
-  }, [formatFilters.cd, formatFilters.vinyl]);
 
   // Initialize
   useEffect(() => {
@@ -206,16 +224,12 @@ export default function App() {
   const handleSearch = async (page = 1, queryOverride?: string) => {
     const queryToSearch = (queryOverride ?? searchQuery).trim();
     if (!queryToSearch) return;
+    const isNewQuery = page === 1 && queryToSearch !== searchPage.query;
     setIsSearching(true);
     const startedAt = performance.now();
 
     try {
-      const result = await searchVinylReleaseGroups(
-        queryToSearch,
-        page,
-        SEARCH_PAGE_SIZE,
-        selectedSearchFormats,
-      );
+      const result = await searchVinylReleaseGroups(queryToSearch, page, SEARCH_PAGE_SIZE);
       logEvent('discover', 'Search results', {
         query: queryToSearch,
         page,
@@ -225,6 +239,17 @@ export default function App() {
         ms: Math.round(performance.now() - startedAt),
       });
       setSearchPage(result);
+      // Accumulate format buckets across pages of the same query (so
+      // checkboxes don't disappear/reappear while paging), but start fresh
+      // for a brand new query.
+      setDiscoveredFormatBuckets((prev) => {
+        const base = isNewQuery ? [] : prev;
+        const next = new Set(base);
+        for (const group of result.groups) {
+          for (const bucket of bucketsForGroup(group)) next.add(bucket);
+        }
+        return Array.from(next);
+      });
       setGroupReleases({});
       releasesRef.current = {};
       loadingRef.current.clear();
@@ -241,11 +266,6 @@ export default function App() {
       setIsSearching(false);
     }
   };
-
-  useEffect(() => {
-    if (!searchPage.query) return;
-    void handleSearch(1, searchPage.query);
-  }, [formatFilters.cd, formatFilters.vinyl]);
 
   const loadReleasesForGroup = useCallback(
     async (releaseGroupId: string, silent = false) => {
@@ -284,31 +304,41 @@ export default function App() {
     [],
   );
 
-  const formatMatchesFilters = useCallback(
-    (format?: string) => {
-      const selectedAny = formatFilters.vinyl || formatFilters.cd;
-      if (!selectedAny) return false;
-
-      const formatLower = (format ?? '').toLowerCase();
-      const isVinyl = /vinyl|\blp\b/.test(formatLower);
-      const isCd = /\bcd\b/.test(formatLower);
-
-      return (
-        (formatFilters.vinyl && isVinyl) ||
-        (formatFilters.cd && isCd)
-      );
-    },
-    [formatFilters.cd, formatFilters.vinyl],
+  const isBucketChecked = useCallback(
+    (bucket: string) => formatFilters[bucket] ?? true,
+    [formatFilters],
   );
 
-  const filteredGroups = useMemo(() => searchPage.groups, [searchPage.groups]);
+  const groupMatchesFilters = useCallback(
+    (group: SearchResultGroup) => bucketsForGroup(group).some(isBucketChecked),
+    [isBucketChecked],
+  );
+
+  const releaseMatchesFilters = useCallback(
+    (format?: string) => isBucketChecked(bucketForFormat(format ?? 'Unknown')),
+    [isBucketChecked],
+  );
+
+  const sortedBuckets = useMemo(() => {
+    const priority = PRIORITY_FORMAT_BUCKETS.filter((bucket) => discoveredFormatBuckets.includes(bucket));
+    const rest = discoveredFormatBuckets
+      .filter((bucket) => bucket !== 'Unknown' && !PRIORITY_FORMAT_BUCKETS.includes(bucket))
+      .sort((a, b) => a.localeCompare(b));
+    const unknown = discoveredFormatBuckets.includes('Unknown') ? ['Unknown'] : [];
+    return [...priority, ...rest, ...unknown];
+  }, [discoveredFormatBuckets]);
+
+  const filteredGroups = useMemo(
+    () => searchPage.groups.filter(groupMatchesFilters),
+    [searchPage.groups, groupMatchesFilters],
+  );
 
   const totalPages = Math.max(1, Math.ceil(searchPage.total / searchPage.pageSize));
 
   const getFilteredReleases = (group: SearchResultGroup) => {
     const detail = groupReleases[group.releaseGroupId];
     if (!detail) return [];
-    return detail.releases.filter((release) => formatMatchesFilters(release.format));
+    return detail.releases.filter((release) => releaseMatchesFilters(release.format));
   };
 
   const toggleGroupExpanded = async (group: SearchResultGroup) => {
@@ -517,36 +547,26 @@ export default function App() {
             {isSearching ? '...' : 'Search'}
           </button>
         </div>
-        <div className="flex items-center gap-5 text-sm text-gray-300">
-          <label className="inline-flex items-center gap-2 select-none">
-            <input
-              type="checkbox"
-              checked={formatFilters.vinyl}
-              onChange={(e) =>
-                setFormatFilters((prev) => ({
-                  ...prev,
-                  vinyl: e.target.checked,
-                }))
-              }
-              className="accent-vinyl-accent"
-            />
-            Vinyl
-          </label>
-          <label className="inline-flex items-center gap-2 select-none">
-            <input
-              type="checkbox"
-              checked={formatFilters.cd}
-              onChange={(e) =>
-                setFormatFilters((prev) => ({
-                  ...prev,
-                  cd: e.target.checked,
-                }))
-              }
-              className="accent-vinyl-accent"
-            />
-            CD
-          </label>
-        </div>
+        {sortedBuckets.length > 0 && (
+          <div className="flex flex-wrap items-center gap-5 text-sm text-gray-300">
+            {sortedBuckets.map((bucket) => (
+              <label key={bucket} className="inline-flex items-center gap-2 select-none">
+                <input
+                  type="checkbox"
+                  checked={formatFilters[bucket] ?? true}
+                  onChange={(e) =>
+                    setFormatFilters((prev) => ({
+                      ...prev,
+                      [bucket]: e.target.checked,
+                    }))
+                  }
+                  className="accent-vinyl-accent"
+                />
+                {bucket}
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
       {isSearching && (
@@ -563,17 +583,9 @@ export default function App() {
 
       {searchPage.total > 0 && (
         <div className="mb-4 text-sm text-gray-400 flex flex-wrap gap-4">
-          <span>
-            {searchPage.isTotalExact
-              ? `${searchPage.total.toLocaleString()} matching release groups`
-              : `${searchPage.total.toLocaleString()}+ matching release groups loaded`}
-          </span>
-          <span>
-            {searchPage.isTotalExact
-              ? `Page ${searchPage.page} of ${totalPages}`
-              : `Page ${searchPage.page}`}
-          </span>
-          <span>{`${filteredGroups.length} shown on this page`}</span>
+          <span>{`${searchPage.total.toLocaleString()} matching release groups`}</span>
+          <span>{`Page ${searchPage.page} of ${totalPages}`}</span>
+          <span>{`${filteredGroups.length} of ${searchPage.groups.length} shown on this page`}</span>
         </div>
       )}
 
@@ -604,7 +616,7 @@ export default function App() {
                   <h3 className="text-lg font-bold text-white truncate">{group.title}</h3>
                   <p className="text-sm text-gray-400 truncate">{group.artist}</p>
                   <p className="text-xs text-gray-500 mt-1">
-                    {[group.firstReleaseDate?.slice(0, 4), `${releaseCount} matching release${releaseCount === 1 ? '' : 's'}`]
+                    {[group.firstReleaseDate?.slice(0, 4), `${releaseCount} release${releaseCount === 1 ? '' : 's'}`]
                       .filter(Boolean)
                       .join(' • ')}
                   </p>
@@ -700,9 +712,15 @@ export default function App() {
         })}
       </div>
 
-      {!isSearching && searchPage.groups.length === 0 && searchQuery && (
+      {!isSearching && searchQuery && searchPage.total === 0 && (
         <div className="text-center text-gray-500 mt-10">
           No results found. Try a different query.
+        </div>
+      )}
+
+      {!isSearching && searchQuery && searchPage.total > 0 && filteredGroups.length === 0 && (
+        <div className="text-center text-gray-500 mt-10">
+          {`${searchPage.groups.length} release group${searchPage.groups.length === 1 ? '' : 's'} found on this page, but none match your selected formats above.`}
         </div>
       )}
 
@@ -715,11 +733,7 @@ export default function App() {
           >
             Prev
           </button>
-          <span className="text-sm text-gray-400 px-2">
-            {searchPage.isTotalExact
-              ? `Page ${searchPage.page} / ${totalPages}`
-              : `Page ${searchPage.page}`}
-          </span>
+          <span className="text-sm text-gray-400 px-2">{`Page ${searchPage.page} / ${totalPages}`}</span>
           <button
             disabled={!searchPage.hasMore || isSearching}
             onClick={() => handleSearch(searchPage.page + 1)}
