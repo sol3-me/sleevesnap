@@ -673,7 +673,7 @@ export default function App() {
           className="grid gap-4 md:gap-6"
           style={
             isMobileLayout
-              ? { gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(140px, 44vw, 190px), 1fr))' }
+              ? { gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }
               : {
                 gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
                 justifyContent: 'flex-start',
@@ -783,69 +783,86 @@ export default function App() {
 
           return (
             <div key={group.releaseGroupId} className="bg-vinyl-800 rounded-xl border border-vinyl-700 overflow-hidden">
-              <button
+              {/* Not a <button> — it contains the MusicBrainz/Discogs links
+                  below, and interactive elements can't nest inside a button
+                  (invalid HTML, breaks screen readers). Clicking this area
+                  still toggles expansion for mouse users; the "Show releases"
+                  control below is the real, keyboard-accessible button. */}
+              <div
                 onClick={() => toggleGroupExpanded(group)}
-                className="w-full text-left p-4 flex gap-4 hover:bg-vinyl-700/30 transition-colors"
+                className="w-full text-left p-4 flex flex-col sm:flex-row gap-4 hover:bg-vinyl-700/30 transition-colors cursor-pointer"
               >
-                <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0 bg-vinyl-900">
-                  {renderCoverThumb(`group-${group.releaseGroupId}`, group.title, group.thumbnailUrl, 'No group art')}
-                </div>
+                <div className="flex gap-4 flex-1 min-w-0">
+                  <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0 bg-vinyl-900">
+                    {renderCoverThumb(`group-${group.releaseGroupId}`, group.title, group.thumbnailUrl, 'No group art')}
+                  </div>
 
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-bold text-white truncate">
-                    {group.title}
-                    {group.primaryType && (
-                      <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-vinyl-700 text-gray-300">
-                        {group.primaryType}
-                      </span>
-                    )}
-                    {groupOwned && (
-                      <span
-                        className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-700 text-green-100"
-                        title="You already own at least one pressing of this release"
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-bold text-white truncate min-w-0">{group.title}</h3>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {group.primaryType && (
+                          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-vinyl-700 text-gray-300">
+                            {group.primaryType}
+                          </span>
+                        )}
+                        {groupOwned && (
+                          <span
+                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-700 text-green-100"
+                            title="You already own at least one pressing of this release"
+                          >
+                            In Collection
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-sm text-gray-400 truncate">{group.artist}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {[group.firstReleaseDate?.slice(0, 4), `${releaseCount} release${releaseCount === 1 ? '' : 's'}`]
+                        .filter(Boolean)
+                        .join(' • ')}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1 truncate">
+                      {`Formats: ${group.availableFormats.length > 0 ? group.availableFormats.join(', ') : 'Unknown'}`}
+                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-3 text-xs">
+                      <a
+                        href={group.releaseGroupUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-vinyl-accent hover:text-white underline"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        In Collection
-                      </span>
-                    )}
-                  </h3>
-                  <p className="text-sm text-gray-400 truncate">{group.artist}</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {[group.firstReleaseDate?.slice(0, 4), `${releaseCount} release${releaseCount === 1 ? '' : 's'}`]
-                      .filter(Boolean)
-                      .join(' • ')}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1 truncate">
-                    {`Formats: ${group.availableFormats.length > 0 ? group.availableFormats.join(', ') : 'Unknown'}`}
-                  </p>
-                  <div className="mt-1 flex flex-wrap items-center gap-3 text-xs">
-                    <a
-                      href={group.releaseGroupUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-vinyl-accent hover:text-white underline"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      MusicBrainz Group
-                    </a>
-                    <a
-                      href={discogsGroupUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-vinyl-accent hover:text-white underline"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {group.discogsMasterUrl || details?.discogsMasterUrl ? 'Discogs Master' : 'Discogs Search'}
-                    </a>
+                        MusicBrainz Group
+                      </a>
+                      <a
+                        href={discogsGroupUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-vinyl-accent hover:text-white underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {group.discogsMasterUrl || details?.discogsMasterUrl ? 'Discogs Master' : 'Discogs Search'}
+                      </a>
+                    </div>
                   </div>
                 </div>
 
-                <div className="self-center">
-                  <div className="min-w-[180px] px-4 py-3 rounded-lg border border-vinyl-600 bg-vinyl-900 text-sm text-gray-200 flex items-center justify-center gap-2">
+                <div className="sm:self-center shrink-0">
+                  <button
+                    type="button"
+                    aria-expanded={isExpanded}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleGroupExpanded(group);
+                    }}
+                    className="w-full sm:w-auto sm:min-w-[160px] px-4 py-2 rounded-lg border border-vinyl-600 bg-vinyl-900 text-sm text-gray-200 flex items-center justify-center gap-2 hover:bg-vinyl-700 transition-colors"
+                  >
                     <span>{canExpand ? (isExpanded ? 'Hide releases' : 'Show releases') : 'Single release'}</span>
                     <span className={`text-base leading-none transition-transform ${isExpanded ? 'rotate-180' : ''}`}>⌄</span>
-                  </div>
+                  </button>
                 </div>
-              </button>
+              </div>
 
               {isExpanded && (
                 <div className="px-4 pb-4 space-y-3 border-t border-vinyl-700/70">
