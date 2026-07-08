@@ -41,8 +41,8 @@ test('does not cache an empty result — an identical repeated query still hits 
     return jsonResponse(emptyResult);
   }) as typeof fetch;
 
-  const first = await searchVinylReleaseGroups('songs for the de', 1, 5, ['vinyl']);
-  const second = await searchVinylReleaseGroups('songs for the de', 1, 5, ['vinyl']);
+  const first = await searchVinylReleaseGroups('songs for the de', 1, 5);
+  const second = await searchVinylReleaseGroups('songs for the de', 1, 5);
 
   assert.equal(first.groups.length, 0);
   assert.equal(second.groups.length, 0);
@@ -56,8 +56,8 @@ test('caches a non-empty result — an identical repeated query is served from c
     return jsonResponse(oneResult);
   }) as typeof fetch;
 
-  const first = await searchVinylReleaseGroups('songs for the deaf', 1, 5, ['vinyl']);
-  const second = await searchVinylReleaseGroups('songs for the deaf', 1, 5, ['vinyl']);
+  const first = await searchVinylReleaseGroups('songs for the deaf', 1, 5);
+  const second = await searchVinylReleaseGroups('songs for the deaf', 1, 5);
 
   assert.equal(first.groups.length, 1);
   assert.deepEqual(second, first);
@@ -73,9 +73,9 @@ test('reproduces the real bug scenario: shorter fragment stays empty, longer fra
     throw new Error(`Unexpected query in test: ${body.query}`);
   }) as typeof fetch;
 
-  const shortFragment = await searchVinylReleaseGroups('songs for the de', 1, 5, ['vinyl']);
-  const longerFragment = await searchVinylReleaseGroups('songs for the dea', 1, 5, ['vinyl']);
-  const fullTitle = await searchVinylReleaseGroups('songs for the deaf', 1, 5, ['vinyl']);
+  const shortFragment = await searchVinylReleaseGroups('songs for the de', 1, 5);
+  const longerFragment = await searchVinylReleaseGroups('songs for the dea', 1, 5);
+  const fullTitle = await searchVinylReleaseGroups('songs for the deaf', 1, 5);
 
   assert.equal(shortFragment.groups.length, 0);
   assert.equal(longerFragment.groups.length, 3);
@@ -87,12 +87,12 @@ test('reproduces the real bug scenario: shorter fragment stays empty, longer fra
 
   // Re-typing the exact empty fragment again must still ask the API, not
   // reuse whatever the longer/adjacent queries returned.
-  const shortFragmentAgain = await searchVinylReleaseGroups('songs for the de', 1, 5, ['vinyl']);
+  const shortFragmentAgain = await searchVinylReleaseGroups('songs for the de', 1, 5);
   assert.equal(shortFragmentAgain.groups.length, 0);
 });
 
 test('throws on a failed request instead of returning a fake empty page', async () => {
   globalThis.fetch = (async () => jsonResponse({ error: 'boom' }, 502)) as typeof fetch;
 
-  await assert.rejects(() => searchVinylReleaseGroups('anything', 1, 5, ['vinyl']));
+  await assert.rejects(() => searchVinylReleaseGroups('anything', 1, 5));
 });

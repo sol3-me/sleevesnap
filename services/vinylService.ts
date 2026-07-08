@@ -6,7 +6,7 @@ import {
   VinylRecord,
 } from '../types';
 
-const CACHE_PREFIX = 'sleevesnap:search:v3:';
+const CACHE_PREFIX = 'sleevesnap:search:v4:';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
 
@@ -128,16 +128,18 @@ export const searchVinylDatabase = async (
 };
 
 /**
- * Queries paginated release-group search results for Discover Vinyl.
+ * Queries paginated release-group search results for Discover Vinyl. The
+ * server returns every matching release-group unfiltered, enriched with its
+ * real formats — Vinyl/CD/etc. filtering is applied client-side (see
+ * musicbrainz-data-model.md), so it plays no part in this request or its
+ * cache key.
  */
 export const searchVinylReleaseGroups = async (
   query: string,
   page = 1,
   pageSize = 8,
-  formats: Array<'vinyl' | 'cd'> = ['vinyl'],
 ): Promise<SearchResultPage> => {
-  const normalizedFormats = Array.from(new Set(formats)).sort();
-  const cacheKey = `groups:${query.trim().toLowerCase()}:p${page}:s${pageSize}:f${normalizedFormats.join(',')}`;
+  const cacheKey = `groups:${query.trim().toLowerCase()}:p${page}:s${pageSize}`;
   const cached = getCached<SearchResultPage>(cacheKey);
   if (cached) {
     return cached;
@@ -146,7 +148,7 @@ export const searchVinylReleaseGroups = async (
   const res = await fetch('/api/search/groups', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, page, pageSize, formats: normalizedFormats }),
+    body: JSON.stringify({ query, page, pageSize }),
   });
 
   if (!res.ok) {
