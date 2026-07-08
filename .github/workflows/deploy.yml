@@ -97,10 +97,27 @@ jobs:
           docker run -d \
             --name "${{ env.CONTAINER_NAME }}" \
             --restart unless-stopped \
+            --user 0:0 \
             -p "${{ env.HOST_PORT }}:${{ env.CONTAINER_PORT }}" \
             -v "${{ env.DATA_DIR }}:/data" \
             --env-file "$ENV_FILE" \
             "${{ env.IMAGE }}:latest"
+
+      - name: Verify container startup and print diagnostics
+        run: |
+          sleep 3
+          echo "== docker ps (target container) =="
+          docker ps -a --filter "name=${{ env.CONTAINER_NAME }}"
+          echo "== mount + identity probe =="
+          docker run --rm \
+            --user 0:0 \
+            -v "${{ env.DATA_DIR }}:/data" \
+            alpine:3.20 sh -lc 'id && ls -ld /data /data/covers || true && touch /data/.permcheck && ls -l /data/.permcheck'
+          if ! docker ps --format '{{.Names}}' | grep -qx "${{ env.CONTAINER_NAME }}"; then
+            echo "Container failed to stay up. Recent logs:"
+            docker logs --tail 200 "${{ env.CONTAINER_NAME }}" || true
+            exit 1
+          fi
 
       - name: Clean up dangling images
         run: docker image prune -f
