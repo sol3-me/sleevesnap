@@ -24,7 +24,7 @@ jobs:
       CONTAINER_NAME: sleevesnap
       HOST_PORT: "8093"
       CONTAINER_PORT: "3000"
-      DATA_DIR: /runner/persistent_files/sleevesnap/data
+      DATA_DIR: /mnt/user/appdata/sleevesnap
 
     steps:
       - name: Checkout repo
@@ -86,11 +86,9 @@ jobs:
           chmod 600 "$ENV_FILE"
           echo "ENV_FILE=$ENV_FILE" >> "$GITHUB_ENV"
 
-      - name: Ensure persistent data directory is writable
+      - name: Ensure host data directory exists and is writable
         run: |
           mkdir -p "${{ env.DATA_DIR }}/covers"
-          # The app runs as a non-root user in the container; make sure first
-          # boot can create /data/cache.db and write cover files.
           chmod -R 0777 "${{ env.DATA_DIR }}"
 
       - name: Restart container
