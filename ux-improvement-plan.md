@@ -1,6 +1,6 @@
 # sleevesnap UX Improvement Plan
 
-**Status:** Phase 1 ("Stop the bleeding," §8) is implemented — see the ✅ markers below and the updated §8 table. Phases 2–6 are still proposals.
+**Status:** Phases 1 and 2 (§8) are implemented — see the ✅ markers below and the updated §8 table. Phases 3–6 are still proposals.
 **How it was produced:** a full walkthrough of the running app (desktop + 375px mobile viewports, all four views: Login, Home/Collection, Discover, Scanner) combined with a read of the frontend source (`App.tsx`, `components/*`, `index.html`) and the original `project-roadmap.md`. Library recommendations were checked against current (mid-2026) ecosystem research; sources at the bottom.
 **How to use it:** each item is written as a self-contained instruction for a future contributor. Priorities: **P0** = broken or misleading today, **P1** = the "okay → good" gap, **P2** = the "good → amazing" gap. Unimplemented items reference `file:line` as of commit `20311e2` (pre-Phase-1) — line numbers will have drifted for files Phase 1 touched (`App.tsx`, `index.html`); implemented items reference the commit that landed them instead.
 
@@ -20,28 +20,33 @@ Implemented: `tailwindcss` + `@tailwindcss/vite` installed, plugin added to `vit
 
 Implemented: import map deleted; Vite bundles React from `node_modules` as normal. Verified via the network log — no `esm.sh` requests on load.
 
-### 1.3 (P0) Introduce real routing — the URL currently carries no state
-Navigation is a `useState<ViewState>` (`App.tsx:142`). Consequences observed live: refreshing always dumps you on Home; the browser back button exits the site instead of going back a view; you can't link anyone (or yourself, in another tab) to a search; signing out and back in loses your Discover results; opening a specific record is impossible because records have no URL.
+### 1.3 ✅ (P0) Introduce real routing — the URL currently carries no state — done (`d047cee`)
+Navigation was a `useState<ViewState>`. Refreshing always dumped you on Home; back button exited the site; nothing was linkable.
 
-Fix: adopt a router and make these routes: `/` (collection), `/collection/:id` (detail — see §3.2), `/discover?q=…&page=…&formats=…&types=…`, `/scan`. Two solid options:
+Implemented: **TanStack Router** (code-based route tree, no file-based codegen — `router.tsx`), exact-pinned at `1.170.17` and verified via `npm audit signatures` (see the dependency note below). Routes: `/` (collection, with a `highlight` search param), `/discover` (with `q`/`page` search params), `/scan`. `ViewState` and the hand-rolled nav-highlighting ternaries are deleted; navigation uses `<Link>` with `activeProps`.
 
-- **TanStack Router** — typed search params are a genuinely good fit here: the Discover query/page/filter state is exactly the "URL maps to validated state" model it's built around, and it integrates tightly with TanStack Query (§1.4). This is my recommendation.
-- **React Router v7** — the conservative, most-hired-for choice; fine if the team prefers familiarity.
+**Scope actually delivered vs. the original sketch:** `/collection/:id` is not built — no detail view exists yet (that's §3.2, phase 3). Discover's `formats`/`types` filters and per-search UI state (expanded groups, loaded release details, failed-cover tracking) stayed as local component state rather than URL params — only `q`/`page` made the cut, since the dynamic bucket-keyed filter shape doesn't map cleanly onto a typed search schema without real added complexity. Revisit if/when filter state needs to be shareable via link.
 
-Once routing exists, delete `ViewState`, the `view` state, and the hand-rolled nav-highlighting ternaries (`App.tsx:929-946`, `998-1014`).
+**Note for future readers:** TanStack Router asserts `strictNullChecks` at the type level, so `tsconfig.json` now has it enabled — this is a genuine (small) tightening of the frontend's type safety, not just a router requirement to work around.
 
-### 1.4 (P1) Move server state to TanStack Query
-Every mutation today manually refetches the whole collection: `setCollection(await getCollection())` appears in add, remove, and scan-complete paths (`App.tsx:200`, `213`, `979`). There's no caching, no optimistic updates, no retry, and a failed refetch leaves stale UI silently. TanStack Query gives: instant optimistic add/remove (the "Add to Collection" button flipping green *immediately*, rolling back on error), background refetch, and deduped requests. The `isReleaseOwned`/`isGroupOwned` memos in `App.tsx` stay as-is — they just read from the query cache instead of local state.
+Verified live: direct navigation, `<Link>` clicks, and — the actual point of this work — browser back/forward restoring a full Discover search (query text, page, and results) from the URL alone.
 
-### 1.5 (P1) Split `App.tsx` (1,044 lines) and fix the inline-component anti-pattern
-`DashboardView` and `LoginView` are components *defined inside* `App()` (`App.tsx:585`, `~555`) and rendered as `<DashboardView />`. React treats a freshly-created function as a new component type each render, so the whole subtree unmounts/remounts whenever `App` re-renders — this discards image load state, focus, and scroll, and is why the collection grid can visibly flicker when a toast fires. Move them to `views/CollectionView.tsx`, `views/DiscoverView.tsx` (currently the `renderSearchView()` function), `views/LoginView.tsx`, and keep `App.tsx` as shell + providers. The bucket/filter helper functions at the top of `App.tsx` should move to `lib/filters.ts` with unit tests.
+### 1.4 ✅ (P1) Move server state to TanStack Query — done (`d047cee`)
+Every mutation manually refetched the whole collection (`setCollection(await getCollection())`) with no caching, no retry, and a failed refetch failing silently.
 
-### 1.6 (P0) Decide what the login actually is — right now it's theater
-The login screen accepts any name, fabricates an email (`ben@sleevesnap.app`), and stores a profile in localStorage — while **all collection data lives server-side with no user scoping**. Two people "logging in" with different names see and edit the same collection. That's misleading in a way that erodes trust the moment a user notices. Also: on mobile there is **no sign-out at all** (the only Sign Out button lives in the desktop-only sidebar, `App.tsx:956`).
+Implemented: `hooks/useCollection.ts` — `useCollectionQuery`, `useAddToCollectionMutation`, `useRemoveFromCollectionMutation`, all keyed on `collectionQueryKey`. The delayed-delete + Undo behavior from Phase 1 is preserved exactly (same 5s window, same toast action) but now backed by `queryClient.setQueryData` for the optimistic hide/restore instead of a plain `useState<VinylRecord[]>`. Add-to-collection and scan-complete both invalidate the query instead of manually refetching.
 
-Pick one:
-- **(Recommended for a self-hosted single-user app)** Delete the login entirely. Boot straight into the collection. Keep a display name in a small Settings page if the greeting is wanted. This removes a whole view, a fake-auth service, and a lie.
-- If multi-user is genuinely on the roadmap, do it properly (the original roadmap said Firebase Auth; for self-hosted, an `Authorization` header + user column on `collection` is the honest minimum) — but don't ship name-only "auth" in the meantime.
+Not done (deferred, low-risk): true optimistic *add* (the button flipping green before the server confirms) — today's add still awaits the mutation before updating UI, same as before this phase. Worth revisiting alongside §4.3.
+
+### 1.5 ✅ (P1) Split `App.tsx` (1,044 lines) and fix the inline-component anti-pattern — done (`d047cee`)
+`DashboardView` and `LoginView` were components *defined inside* `App()`, so the whole subtree unmounted/remounted on every `App` re-render.
+
+Implemented: `views/CollectionView.tsx`, `views/DiscoverView.tsx`, `views/ScanView.tsx` as real top-level components (one per route), `components/Layout.tsx` (sidebar/mobile nav/`Toaster`/`Outlet`), `components/Icons.tsx`, `contexts/ScanContext.tsx` (the paste-to-scan image needs `useNavigate`, so it lives inside the router tree rather than above it), `lib/filters.ts` + `lib/queryClient.ts`, `hooks/useCollection.ts` + `hooks/useIsMobileLayout.ts`. `App.tsx` is now 10 lines: `QueryClientProvider` wrapping `RouterProvider`.
+
+### 1.6 ✅ (P0) Decide what the login actually is — right now it's theater — done (`d047cee`)
+The login screen accepted any name, fabricated an email, and stored a profile in localStorage, while collection data had no real user scoping.
+
+Implemented the recommended option: deleted entirely. `LoginView`, `handleLogin`/`handleLogout`, `ViewState.LOGIN`, the `UserProfile` type, and `getUser`/`loginUser`/`logoutUser` from `storageService.ts` are all gone. The app boots straight into the collection; the sidebar no longer shows a fake avatar/name/email/Sign-Out block. **Per the user, this is an interim state** — real multi-user accounts with social sign-in are planned for later, at which point this gets replaced with the real thing rather than resurrecting the name-only version.
 
 ### 1.7 (P2) Ship the PWA the roadmap promised
 No manifest, no service worker, no icons today. Use `vite-plugin-pwa`: app-shell precache, runtime cache for Cover Art Archive images (`coverartarchive.org`, stale-while-revalidate), maskable icons, `theme_color: #121212`. This is what makes "add to home screen → open in the record store → scan" feel native, which is the core use case. Depends on 1.1/1.2 (no CDN dependencies) to be meaningful.
@@ -210,7 +215,7 @@ Beyond 2.3/2.7:
 | Phase | Contents | Outcome | Status |
 |---|---|---|---|
 | 1. Stop the bleeding | 1.1, 1.2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 | No broken mobile views, no destructive mis-taps, production-legit styling pipeline | ✅ Done — `7d76072`, `de88c4f`, `ffd8dad` |
-| 2. Skeleton upgrade | 1.3 routing, 1.4 TanStack Query, 1.5 App split, 1.6 login decision | URLs, back button, optimistic UI, maintainable codebase | Not started |
+| 2. Skeleton upgrade | 1.3 routing, 1.4 TanStack Query, 1.5 App split, 1.6 login decision | URLs, back button, optimistic UI, maintainable codebase | ✅ Done — `039d3be`, `d047cee` |
 | 3. Collection depth | 3.1, 3.2, 3.3 (+PATCH endpoint), 2.7, 7 | The collection becomes the product's heart | Not started |
 | 4. Discover flow | 4.1, 4.2, 4.3, 2.9 | Search that feels fast and honest | Not started |
 | 5. Scanner promise | 5.1, 5.2, 5.4 | Scans log *your exact copy* | Not started |
@@ -219,6 +224,10 @@ Beyond 2.3/2.7:
 Each phase should follow the repo's existing convention: failing test first where server behavior changes (PATCH endpoint, progressive enrichment), commit red, then green, and verify live in the browser preview at 375px *and* desktop widths — the mobile crush in 2.1 shipped precisely because verification happened desktop-only.
 
 **Phase 1 verification, for the record:** `npx tsc --noEmit` (frontend) and `npm test` (full backend suite, 4 test files unaffected by these changes) both clean; `npm run build` produces a clean production bundle with build-time CSS (31 KB / 6 KB gzipped) instead of the CDN payload; every fix in §1.1–1.2, §2.1–2.6 was checked live in the browser preview at both 375px and desktop widths, including a direct accessibility-tree check for §2.3 and a real add/remove/undo round-trip against the API for §2.5. Phase 1 touched only `App.tsx`, `index.html`, `index.css` (new), `index.tsx`, `vite.config.ts`, and `package.json` — no backend changes, so no new backend tests were needed.
+
+**Phase 2 decisions made before starting (recorded here since they shape the diff):** the login screen was removed as an explicitly *interim* state — the user confirmed real multi-user accounts with social sign-in are planned later, so this isn't a final design call, just deleting dead theater until the real thing exists. On the router choice: TanStack was picked over React Router only after checking TanStack's May 2026 npm supply-chain incident in detail (a compromised GitHub Actions release pipeline — a "Pwn Request" + cache-poisoning attack that stole an OIDC token and used TanStack's own trusted identity to publish 84 malicious versions across 42 `@tanstack/*` packages, including `@tanstack/react-router`; not a maintainer credential compromise, 2FA was never bypassed). Both installed versions (`1.170.17` / `5.101.2`) were published in late June/early July 2026, well after the incident and TanStack's hardening follow-up, and both carry verified SLSA provenance attestations (`npm audit signatures` — 278/278 packages verified). They're pinned exact (no `^`/`~`) as ongoing practice, though it's worth being honest that this level of protection (exact pin + provenance check) is generic npm-ecosystem hygiene, not something specific to TanStack — the same reasoning would apply to any actively-published dependency.
+
+**Phase 2 verification, for the record:** `npx tsc --noEmit` (frontend, now with `strictNullChecks` on), `npx tsc -p tsconfig.server.json --noEmit`, and `npm test` all clean; `npm run build` produces a clean bundle (401 KB / 123 KB gzipped JS — the size jump from Phase 1's 272 KB is the router + query client, expected). Live-verified in the browser: `<Link>` navigation between all three routes, browser back/forward correctly restoring a full Discover search (query text, page, and rendered results) purely from the URL, add-to-collection and remove+undo both round-tripping correctly through the TanStack Query cache (confirmed via direct DOM/API inspection, not just visual), the `highlight` search param applying the ring-highlight class and auto-clearing itself (and its URL param) after 2.5s, and — the trickiest piece to have moved into a Context correctly — paste-to-scan verified with a synthetic `ClipboardEvent` carrying a real image file, correctly routing to `/scan` with the image already attached and processed.
 
 ---
 
