@@ -38,6 +38,8 @@ export interface SearchResultGroup {
   availableFormats: string[];
   discogsMasterUrl?: string;
   totalReleases: number;
+  /** MusicBrainz's Album/Single/EP/etc. classification — same title, different real release. */
+  primaryType?: string;
 }
 
 export interface SearchResultPage {

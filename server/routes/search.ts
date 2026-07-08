@@ -66,6 +66,13 @@ interface CandidateReleaseGroup {
   artist: string;
   firstReleaseDate?: string;
   releaseGroupUrl: string;
+  // MusicBrainz's own Album/Single/EP/etc. classification for this group —
+  // surfaced so the UI can tell apart same-titled groups that are genuinely
+  // different real-world releases (e.g. a pre-release single vs. the album
+  // it's from), which our `type=album` search param doesn't reliably filter
+  // out on its own (confirmed empirically: MusicBrainz still returns Single/
+  // EP-type groups for that query).
+  primaryType?: string;
 }
 
 interface EnrichedReleaseGroup extends CandidateReleaseGroup {
@@ -421,7 +428,7 @@ async function fetchReleaseGroupsByQuery(
   return (await res.json()) as MusicBrainzReleaseGroupSearchResponse;
 }
 
-/** Maps a raw release-group search hit into the shape used by the bounded-retry filtering pipeline. */
+/** Maps a raw release-group search hit into the shape enriched by `enrichCandidate`. */
 function mapReleaseGroupCandidate(rg: MusicBrainzReleaseGroupSearchResult): CandidateReleaseGroup {
   return {
     releaseGroupId: rg.id,
@@ -429,6 +436,7 @@ function mapReleaseGroupCandidate(rg: MusicBrainzReleaseGroupSearchResult): Cand
     artist: getArtistName(rg['artist-credit']),
     firstReleaseDate: rg['first-release-date'],
     releaseGroupUrl: `https://musicbrainz.org/release-group/${rg.id}`,
+    primaryType: rg['primary-type'],
   };
 }
 
