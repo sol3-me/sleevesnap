@@ -1,8 +1,8 @@
 # sleevesnap UX Improvement Plan
 
-**Status:** proposal — nothing in this document is implemented yet.
+**Status:** Phase 1 ("Stop the bleeding," §8) is implemented — see the ✅ markers below and the updated §8 table. Phases 2–6 are still proposals.
 **How it was produced:** a full walkthrough of the running app (desktop + 375px mobile viewports, all four views: Login, Home/Collection, Discover, Scanner) combined with a read of the frontend source (`App.tsx`, `components/*`, `index.html`) and the original `project-roadmap.md`. Library recommendations were checked against current (mid-2026) ecosystem research; sources at the bottom.
-**How to use it:** each item is written as a self-contained instruction for a future contributor. Priorities: **P0** = broken or misleading today, **P1** = the "okay → good" gap, **P2** = the "good → amazing" gap. Items reference `file:line` as of commit `20311e2`.
+**How to use it:** each item is written as a self-contained instruction for a future contributor. Priorities: **P0** = broken or misleading today, **P1** = the "okay → good" gap, **P2** = the "good → amazing" gap. Unimplemented items reference `file:line` as of commit `20311e2` (pre-Phase-1) — line numbers will have drifted for files Phase 1 touched (`App.tsx`, `index.html`); implemented items reference the commit that landed them instead.
 
 ---
 
@@ -10,13 +10,15 @@
 
 These aren't cosmetic, but every UX item below gets cheaper and safer once they land.
 
-### 1.1 (P0) Replace the Tailwind CDN script with the build-time Vite plugin
-`index.html:9` loads `https://cdn.tailwindcss.com` — the browser-JIT play CDN. It logs a "should not be used in production" warning on every load (visible in the console right now), re-generates CSS at runtime on every page load, causes a flash of unstyled content, and ships the entire framework instead of the ~10 KB the app actually uses. It also breaks the roadmap's offline/PWA goal, since first paint depends on a third-party CDN.
+### 1.1 ✅ (P0) Replace the Tailwind CDN script with the build-time Vite plugin — done (`7d76072`)
+`index.html:9` loaded `https://cdn.tailwindcss.com` — the browser-JIT play CDN. It logged a "should not be used in production" warning on every load, re-generated CSS at runtime on every page load, and shipped the entire framework instead of the ~10 KB the app actually uses.
 
-Fix: `npm i tailwindcss @tailwindcss/vite`, add the plugin to `vite.config.ts`, create an `index.css` with `@import "tailwindcss"` plus a `@theme` block that ports the inline `window.tailwind.config` palette (`vinyl.900/800/700/accent/muted`, `spin-slow`). Move the custom scrollbar and `search-progress` CSS from the inline `<style>` block into that file. Delete both `<script>` tags from `index.html`. Tailwind v4's Vite plugin needs no `tailwind.config.js` and no content paths.
+Implemented: `tailwindcss` + `@tailwindcss/vite` installed, plugin added to `vite.config.ts`, new `index.css` with `@import "tailwindcss"` plus a `@theme` block porting the old `vinyl.900/800/700/accent/muted` palette and `spin-slow`. The custom scrollbar and `search-progress` CSS moved from the inline `<style>` block into that file. Both `<script>` tags removed from `index.html`. Verified: no `cdn.tailwindcss.com` request on reload, production build emits a 31 KB (6 KB gzipped) `index-*.css` instead.
 
-### 1.2 (P0) Stop loading React from esm.sh at runtime
-`index.html:66-74` has an import map pointing `react`/`react-dom` at `https://esm.sh/...`. React is *also* in `package.json`, so the app has two competing sources of truth, and — worse — a self-hosted app that's supposed to work offline hard-depends on a third-party CDN at boot. If esm.sh is slow or unreachable, sleevesnap doesn't start. Delete the import map and let Vite bundle React from `node_modules` (it already can; the map is overriding it in the browser).
+### 1.2 ✅ (P0) Stop loading React from esm.sh at runtime — done (`7d76072`)
+`index.html:66-74` had an import map pointing `react`/`react-dom` at `https://esm.sh/...`, so a self-hosted app that's supposed to work offline hard-depended on a third-party CDN at boot.
+
+Implemented: import map deleted; Vite bundles React from `node_modules` as normal. Verified via the network log — no `esm.sh` requests on load.
 
 ### 1.3 (P0) Introduce real routing — the URL currently carries no state
 Navigation is a `useState<ViewState>` (`App.tsx:142`). Consequences observed live: refreshing always dumps you on Home; the browser back button exits the site instead of going back a view; you can't link anyone (or yourself, in another tab) to a search; signing out and back in loses your Discover results; opening a specific record is impossible because records have no URL.
@@ -50,25 +52,37 @@ No manifest, no service worker, no icons today. Use `vite-plugin-pwa`: app-shell
 
 All of these were observed, not hypothesized. Ordered by severity.
 
-### 2.1 (P0) Mobile Discover cards are crushed to unreadable
-At 375px, a release-group card renders its title as a single letter ("C") with metadata wrapping one word per line, because the row is: 80px thumbnail + flexible text + a `min-w-[180px]` "Show releases" control (`App.tsx:796`), all forced into one horizontal flex row (`App.tsx:741`). 80 + 180 + gaps leaves ~40px for text.
+### 2.1 ✅ (P0) Mobile Discover cards are crushed to unreadable — done (`ffd8dad`)
+At 375px, a release-group card rendered its title as a single letter ("C") with metadata wrapping one word per line, because the row was: 80px thumbnail + flexible text + a `min-w-[180px]` "Show releases" control, all forced into one horizontal flex row.
 
-Fix: on small screens stack the card — thumbnail + title/badges row on top, metadata below, and the expand affordance as a full-width bottom strip of the card (or just make the whole card the toggle and shrink the affordance to a chevron). Kill the `min-w-[180px]`; it buys nothing even on desktop.
+Implemented: the header stacks vertically below `sm:` (`flex-col sm:flex-row`), the "Show releases" control is full-width on mobile / auto-width with `sm:min-w-[160px]` on desktop, and the fixed 180px min-width is gone. Verified live at 375px — title, artist, metadata, and both external links now render fully alongside a proper "ALBUM" badge, with a full-width "Show releases" affordance below.
 
-### 2.2 (P0) The group-level "In Collection" badge truncates to "IN C…"
-The `primaryType` and owned badges are rendered *inside* the `truncate` `<h3>` (`App.tsx:748-763`), so any longish title ellipsizes the badges themselves — observed live as "IN C…" on the Queens of the Stone Age card. Restructure to `<div class="flex items-center gap-2 min-w-0"><h3 class="truncate">{title}</h3><badges shrink-0 /></div>` so the *title* truncates and badges always survive.
+### 2.2 ✅ (P0) The group-level "In Collection" badge truncates to "IN C…" — done (`ffd8dad`)
+The `primaryType` and owned badges were rendered *inside* the `truncate` `<h3>`, so any longish title ellipsized the badges themselves — observed live as "IN C…" on the Queens of the Stone Age card.
 
-### 2.3 (P0) `<a>` elements nested inside a `<button>` on every Discover card
-The entire group header is a `<button>` (`App.tsx:739`) containing the MusicBrainz/Discogs `<a>` links (`App.tsx:774-791`). Interactive-inside-interactive is invalid HTML; screen readers announce the links as part of the button text (confirmed in the accessibility snapshot — the button's accessible name is the entire card's text including "MusicBrainz GroupDiscogs Master"), and keyboard users can't reach the links. Restructure: header is a `<div>`; the expand toggle is a discrete `<button aria-expanded>` (the chevron/label area); links stay links. Clicking the non-link area can still expand via a click handler on the div — but the *semantic* button must not wrap the links.
+Implemented: restructured to a `<div className="flex items-center gap-2">` containing `<h3 className="truncate min-w-0">{title}</h3>` and a `shrink-0` wrapper for the badges, so the title truncates and badges always render in full. Verified live — "ALBUM" and "In Collection" badges both show completely at 375px.
 
-### 2.4 (P1) Mobile collection grid shows one giant card per row at 375px
-`App.tsx:629` uses `minmax(clamp(140px, 44vw, 190px), 1fr)`. At 375px wide: 44vw = 165px, two columns need 165×2+16px gap = 346px, but the padded container is ~343px — so it falls to a single enormous card. iPhone-class widths (375/390) are the most common phone sizes; two columns should be the baseline there. Drop the clamp to `minmax(150px, 1fr)` (or `repeat(2, 1fr)` under `sm:`) and verify at 360/375/390/414.
+### 2.3 ✅ (P0) `<a>` elements nested inside a `<button>` on every Discover card — done (`ffd8dad`)
+The entire group header was a `<button>` containing the MusicBrainz/Discogs `<a>` links — invalid HTML, and the accessibility tree showed the links folded into the button's accessible name.
 
-### 2.5 (P0) "Remove" is instant, permanent, and unconfirmed
-`VinylCard.tsx:130-141` → `handleRemoveFromCollection` (`App.tsx:210`) → hard `DELETE`. One mis-tap on mobile (where the button sits right under the scroll thumb) silently destroys a record including its scanned photo association, with a toast that says "Record removed" and offers nothing. Industry standard is **undo, not confirm**: keep the delete optimistic but hold the row server-side (soft-delete flag or 10s deferred delete) and put an "Undo" action in the toast (trivial with sonner, §6.2). A confirm dialog is the acceptable cheap fallback but adds friction to every legitimate removal.
+Implemented: the header is now a plain `<div onClick={...}>` (still expands on click for mouse users, with the links calling `stopPropagation`), and "Show releases" is its own real `<button aria-expanded>`. Verified via the accessibility snapshot — each link is now a sibling `link` node, not swallowed into a button's name, and there's a discrete `button: "Show releases ⌄"`.
 
-### 2.6 (P1) The toast system needs replacing
-One global `notification` string with a 3-second timer (`App.tsx:191-194`, rendered at `1017-1021`): consecutive events overwrite each other, `animate-bounce` bounces *forever* (distracting, and comical for error-ish messages), the white-on-black box ignores the design language, there's no dismiss, no action slot (blocks 2.5's Undo), and no aria-live. Replace with **sonner** (9 KB, the current community default): `<Toaster theme="dark" position="bottom-right" />`, `toast.success/error/action`. Delete the hand-rolled state.
+### 2.4 ✅ (P1) Mobile collection grid shows one giant card per row at 375px — done (`ffd8dad`)
+`minmax(clamp(140px, 44vw, 190px), 1fr)` fell back to a single column at 375px because the two-column math didn't fit within the padded container.
+
+Implemented: simplified to `minmax(150px, 1fr)`. Verified live at 375px — the collection grid renders 2 columns.
+
+### 2.5 ✅ (P0) "Remove" is instant, permanent, and unconfirmed — done (`de88c4f`)
+`handleRemoveFromCollection` called a hard `DELETE` immediately; one mis-tap silently destroyed a record with a toast offering nothing.
+
+Implemented: the record is hidden from the UI immediately, but the actual `DELETE` is deferred 5 seconds (`REMOVE_UNDO_WINDOW_MS`); the toast shown during that window has an "Undo" action that cancels the pending delete and restores the record. Verified live (and by directly exercising the API): removing a record hides it immediately, clicking Undo restores it with **no** `DELETE` ever reaching the server, and letting the window elapse does send the `DELETE`.
+
+**Known limitation, follow-up for §1.4/§3.2:** the undo window is purely client-side (a `setTimeout`, cleared on unmount). If the tab is closed or the app is force-navigated away within the 5s window, the timer never fires — the record was visually removed but never actually deleted server-side, so it silently reappears next load. A durable fix means either a server-side soft-delete flag (the originally-considered approach) or moving this onto TanStack Query's mutation lifecycle once §1.4 lands. Low-risk in the meantime: worst case is a record you thought you removed still being there, not data loss.
+
+### 2.6 ✅ (P1) The toast system needs replacing — done (`de88c4f`)
+One global `notification` string with a 3-second timer: consecutive events overwrote each other, `animate-bounce` bounced *forever*, no dismiss, no action slot, no aria-live.
+
+Implemented: replaced with **sonner** — `<Toaster theme="dark" position="bottom-right" />` mounted in both the logged-out and logged-in render branches, all `showNotification` call sites converted to `toast.success` / `toast.error` / `toast()`, and the Undo action (§2.5) uses sonner's `action` slot. The hand-rolled `notification` state is deleted.
 
 ### 2.7 (P1) Filter dropdown accessibility is wrong-shaped
 `FilterDropdown.tsx` uses `role="menu"` around checkboxes. Menus are for commands; this is a multi-select. Use `role="listbox"` + `aria-multiselectable` with `role="option"`/`aria-selected` (or Base UI's Select/Popover primitives via shadcn, §6.1, and delete the hand-rolled outside-click/Escape code entirely). Also add arrow-key navigation between options and return focus to the trigger on close.
@@ -193,16 +207,18 @@ Beyond 2.3/2.7:
 
 ## 8. Suggested delivery order
 
-| Phase | Contents | Outcome |
-|---|---|---|
-| 1. Stop the bleeding | 1.1, 1.2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 | No broken mobile views, no destructive mis-taps, production-legit styling pipeline |
-| 2. Skeleton upgrade | 1.3 routing, 1.4 TanStack Query, 1.5 App split, 1.6 login decision | URLs, back button, optimistic UI, maintainable codebase |
-| 3. Collection depth | 3.1, 3.2, 3.3 (+PATCH endpoint), 2.7, 7 | The collection becomes the product's heart |
-| 4. Discover flow | 4.1, 4.2, 4.3, 2.9 | Search that feels fast and honest |
-| 5. Scanner promise | 5.1, 5.2, 5.4 | Scans log *your exact copy* |
-| 6. Delight | 1.7 PWA, 3.4–3.6, 4.4–4.6, 5.3, 5.5, 6.4–6.6 | The "amazing" tier: installable, animated, insightful |
+| Phase | Contents | Outcome | Status |
+|---|---|---|---|
+| 1. Stop the bleeding | 1.1, 1.2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6 | No broken mobile views, no destructive mis-taps, production-legit styling pipeline | ✅ Done — `7d76072`, `de88c4f`, `ffd8dad` |
+| 2. Skeleton upgrade | 1.3 routing, 1.4 TanStack Query, 1.5 App split, 1.6 login decision | URLs, back button, optimistic UI, maintainable codebase | Not started |
+| 3. Collection depth | 3.1, 3.2, 3.3 (+PATCH endpoint), 2.7, 7 | The collection becomes the product's heart | Not started |
+| 4. Discover flow | 4.1, 4.2, 4.3, 2.9 | Search that feels fast and honest | Not started |
+| 5. Scanner promise | 5.1, 5.2, 5.4 | Scans log *your exact copy* | Not started |
+| 6. Delight | 1.7 PWA, 3.4–3.6, 4.4–4.6, 5.3, 5.5, 6.4–6.6 | The "amazing" tier: installable, animated, insightful | Not started |
 
 Each phase should follow the repo's existing convention: failing test first where server behavior changes (PATCH endpoint, progressive enrichment), commit red, then green, and verify live in the browser preview at 375px *and* desktop widths — the mobile crush in 2.1 shipped precisely because verification happened desktop-only.
+
+**Phase 1 verification, for the record:** `npx tsc --noEmit` (frontend) and `npm test` (full backend suite, 4 test files unaffected by these changes) both clean; `npm run build` produces a clean production bundle with build-time CSS (31 KB / 6 KB gzipped) instead of the CDN payload; every fix in §1.1–1.2, §2.1–2.6 was checked live in the browser preview at both 375px and desktop widths, including a direct accessibility-tree check for §2.3 and a real add/remove/undo round-trip against the API for §2.5. Phase 1 touched only `App.tsx`, `index.html`, `index.css` (new), `index.tsx`, `vite.config.ts`, and `package.json` — no backend changes, so no new backend tests were needed.
 
 ---
 
