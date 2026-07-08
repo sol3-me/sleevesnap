@@ -72,8 +72,10 @@ export default function App() {
     typeof window !== 'undefined' ? window.innerWidth < 768 : false,
   );
   const [pendingScanImage, setPendingScanImage] = useState<string | null>(null);
+  const [highlightedRecordId, setHighlightedRecordId] = useState<string | null>(null);
   const releasesRef = useRef<Record<string, SearchGroupReleases>>({});
   const loadingRef = useRef<Set<string>>(new Set());
+  const highlightedCardRef = useRef<HTMLDivElement>(null);
 
   const selectedSearchFormats = useMemo<Array<'vinyl' | 'cd'>>(() => {
     const next: Array<'vinyl' | 'cd'> = [];
@@ -190,6 +192,16 @@ export default function App() {
     window.addEventListener('paste', handlePaste);
     return () => window.removeEventListener('paste', handlePaste);
   }, [user]);
+
+  // Scroll a just-confirmed "already in your collection" record into view and
+  // briefly highlight it, then let the highlight fade on its own.
+  useEffect(() => {
+    if (!highlightedRecordId || view !== ViewState.DASHBOARD) return;
+
+    highlightedCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const timeout = setTimeout(() => setHighlightedRecordId(null), 2500);
+    return () => clearTimeout(timeout);
+  }, [highlightedRecordId, view]);
 
   const handleSearch = async (page = 1, queryOverride?: string) => {
     const queryToSearch = (queryOverride ?? searchQuery).trim();
@@ -467,7 +479,17 @@ export default function App() {
           }
         >
           {collection.map(record => (
-            <VinylCard key={record.id} record={record} onRemove={handleRemoveFromCollection} />
+            <div
+              key={record.id}
+              ref={record.id === highlightedRecordId ? highlightedCardRef : undefined}
+              className={
+                record.id === highlightedRecordId
+                  ? 'rounded-lg ring-4 ring-vinyl-accent ring-offset-2 ring-offset-vinyl-900 transition-shadow'
+                  : undefined
+              }
+            >
+              <VinylCard record={record} onRemove={handleRemoveFromCollection} />
+            </div>
           ))}
         </div>
       )}
@@ -781,6 +803,13 @@ export default function App() {
               setCollection(await getCollection());
               setView(ViewState.DASHBOARD);
               showNotification(`Added "${record.title}" to collection!`);
+            }}
+            onAlreadyInCollection={(record) => {
+              // Already in the collection — no save happened, so no need to
+              // refetch it. Just take the user back and point at it.
+              setView(ViewState.DASHBOARD);
+              showNotification(`"${record.title}" is already in your collection`);
+              setHighlightedRecordId(record.id);
             }}
           />
         ) : view === ViewState.SEARCH ? (

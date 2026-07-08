@@ -6,7 +6,10 @@ import { VinylRecord } from '../types';
 type CaptureMethod = 'camera' | 'upload' | 'drag-drop' | 'paste';
 
 interface ScannerProps {
+  /** Called when a genuinely new record has just been saved to the collection. */
   onScanComplete: (record: VinylRecord) => void;
+  /** Called when the scanned/selected record was already in the collection — no save occurred, so no API call is needed here. */
+  onAlreadyInCollection: (record: VinylRecord) => void;
   onCancel: () => void;
   /** True on narrow/touch layouts — flips which capture method is primary. */
   isMobileLayout?: boolean;
@@ -35,6 +38,7 @@ type Stage =
 
 export const Scanner: React.FC<ScannerProps> = ({
   onScanComplete,
+  onAlreadyInCollection,
   onCancel,
   isMobileLayout = false,
   initialImage,
@@ -265,7 +269,7 @@ export const Scanner: React.FC<ScannerProps> = ({
       // 409 = already in collection; treat as success
       if (err instanceof Error && err.message.includes('already in collection')) {
         logEvent('scanner', 'Save skipped — already in collection', { artist: record.artist, title: record.title });
-        onScanComplete(record);
+        onAlreadyInCollection(record);
       } else {
         logWarn('scanner', 'Save failed', { artist: record.artist, title: record.title, error: err instanceof Error ? err.message : String(err) });
         setError(err instanceof Error ? err.message : 'Failed to save record.');
@@ -450,7 +454,7 @@ export const Scanner: React.FC<ScannerProps> = ({
               Not quite — search
             </button>
             <button
-              onClick={() => onScanComplete(matchedRecord)}
+              onClick={() => onAlreadyInCollection(matchedRecord)}
               className="flex-1 py-3 rounded bg-vinyl-accent text-white font-bold hover:bg-red-500"
             >
               That's it!
