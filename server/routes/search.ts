@@ -7,18 +7,11 @@ const DEFAULT_GROUP_PAGE_SIZE = 5;
 const MAX_GROUP_PAGE_SIZE = 5;
 const RELEASE_LIMIT_PER_GROUP = 100;
 const FLAT_SEARCH_LIMIT = 15;
-// How many raw release-group batches (each `pageSize` candidates) to try
-// before giving up and returning a short, honestly-marked-inexact page.
-// Scales naturally with pageSize since each round already requests
-// `pageSize` candidates — no separate scan-budget bookkeeping needed.
-const MAX_RAW_BATCHES_PER_PAGE = 3;
 // MusicBrainz's public API is rate-limited and occasionally slow/unavailable;
 // a single timeout or 503 shouldn't fail the whole search. Retry transient
 // failures a couple of times with a short backoff before giving up.
 const MAX_FETCH_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 300;
-
-type SearchFormat = 'vinyl' | 'cd';
 
 interface MusicBrainzArtistCredit {
   name?: string;
@@ -75,7 +68,7 @@ interface CandidateReleaseGroup {
   releaseGroupUrl: string;
 }
 
-interface FilteredReleaseGroup extends CandidateReleaseGroup {
+interface EnrichedReleaseGroup extends CandidateReleaseGroup {
   thumbnailUrl?: string;
   availableFormats: string[];
   totalReleases: number;
@@ -140,15 +133,20 @@ searchRouter.post('/', async (req, res) => {
   }
 });
 
-// POST /api/search/groups  – grouped by release group for the Discover view
+// POST /api/search/groups  – grouped by release group for the Discover view.
+// Returns every matching release-group unfiltered, enriched with its real
+// (whatever they are) formats — MusicBrainz's format data is community-
+// maintained and can be incomplete or stale relative to what's actually been
+// pressed, so filtering here would cap our own reliability at MusicBrainz's.
+// The Vinyl/CD/etc. checkboxes are a client-side display filter instead; see
+// musicbrainz-data-model.md.
 searchRouter.post('/groups', async (req, res) => {
   const requestId = newRequestId();
   const startedAt = Date.now();
-  const { query, page, pageSize, formats } = req.body as {
+  const { query, page, pageSize } = req.body as {
     query?: string;
     page?: number;
     pageSize?: number;
-    formats?: string[];
   };
 
   if (!query || typeof query !== 'string') {
@@ -164,30 +162,14 @@ searchRouter.post('/groups', async (req, res) => {
       1,
       Math.min(MAX_GROUP_PAGE_SIZE, Number(pageSize ?? DEFAULT_GROUP_PAGE_SIZE)),
     );
-    const selectedFormats = normalizeRequestedFormats(formats);
 
     logEvent('search', requestId, 'Discover search request', {
       query,
       page: safePage,
       pageSize: safePageSize,
-      formats: selectedFormats,
     });
 
-    if (selectedFormats.length === 0) {
-      logEvent('search', requestId, 'Discover search results', { resultCount: 0, reason: 'no formats selected' });
-      res.json({
-        query,
-        page: safePage,
-        pageSize: safePageSize,
-        total: 0,
-        hasMore: false,
-        isTotalExact: true,
-        groups: [],
-      });
-      return;
-    }
-
-    const discoverPage = await collectDiscoverPage(query, appName, selectedFormats, safePage, safePageSize);
+    const discoverPage = await collectDiscoverPage(query, appName, safePage, safePageSize);
 
     const groups = await Promise.all(
       discoverPage.groups.map(async (group) => ({
@@ -237,13 +219,11 @@ searchRouter.get('/groups/:releaseGroupId/releases', async (req, res) => {
     ]);
     const mapped = releases.map((release) => mapRelease(release, releaseGroupId));
 
-    const availableFormats = Array.from(
-      new Set(
-        mapped
-          .map((release) => release.format)
-          .filter((format): format is string => Boolean(format)),
-      ),
-    );
+    // A release with no discernible format is represented as the literal
+    // string 'Unknown' (mirroring MusicBrainz's own "(unknown)" format
+    // value) rather than silently dropped, so the client's format filter can
+    // still surface it instead of it just vanishing from the set.
+    const availableFormats = Array.from(new Set(mapped.map((release) => release.format ?? 'Unknown')));
 
     res.json({
       releaseGroupId,
@@ -273,78 +253,24 @@ export async function searchReleasesByText(
     .filter((release) => isVinylFormat(release.format));
 }
 
-function normalizeRequestedFormats(rawFormats: string[] | undefined): SearchFormat[] {
-  if (!Array.isArray(rawFormats)) {
-    return ['vinyl'];
-  }
-
-  const unique = new Set<SearchFormat>();
-  for (const raw of rawFormats) {
-    const normalized = raw?.toLowerCase();
-    if (normalized === 'vinyl' || normalized === 'cd') {
-      unique.add(normalized);
-    }
-  }
-
-  return Array.from(unique);
-}
-
 /**
- * Fetches release-groups matching `query` at MusicBrainz's own offset, then
- * enriches only the raw candidates needed (bounded batches of `pageSize`,
- * up to MAX_RAW_BATCHES_PER_PAGE rounds) to determine each one's available
- * formats — reusing the existing `fetchReleasesByGroupId` ("expand
- * releases") lookup rather than scanning individual releases. Candidates
- * with no release matching `selectedFormats` are dropped; if that drops
- * survivors below `pageSize`, the next raw batch is fetched to top up the
- * page, capped at MAX_RAW_BATCHES_PER_PAGE rounds total.
+ * Fetches one raw batch of release-groups matching `query` at MusicBrainz's
+ * own offset, and enriches every candidate with its real format info via
+ * `fetchReleasesByGroupId` (the same "expand releases" lookup) — nothing is
+ * ever dropped, so a single batch always yields the page directly.
  */
-async function fetchFilteredReleaseGroupPage(
+async function fetchReleaseGroupPage(
   query: string,
   appName: string,
-  selectedFormats: SearchFormat[],
   offset: number,
   pageSize: number,
-): Promise<{ groups: FilteredReleaseGroup[]; rawCount: number; exhausted: boolean; hitRetryCap: boolean }> {
-  const survivors: FilteredReleaseGroup[] = [];
-  let currentOffset = offset;
-  let rawCount = 0;
-  let exhausted = false;
-  let rounds = 0;
+): Promise<{ groups: EnrichedReleaseGroup[]; rawCount: number }> {
+  const response = await fetchReleaseGroupsByQuery(query, appName, pageSize, offset);
+  const rawCount = response.count ?? 0;
+  const candidates = (response['release-groups'] ?? []).map(mapReleaseGroupCandidate);
+  const groups = await Promise.all(candidates.map((candidate) => enrichCandidate(candidate, appName)));
 
-  while (survivors.length < pageSize && rounds < MAX_RAW_BATCHES_PER_PAGE) {
-    rounds += 1;
-    const response = await fetchReleaseGroupsByQuery(query, appName, pageSize, currentOffset);
-    rawCount = response.count ?? rawCount;
-    const rawBatch = response['release-groups'] ?? [];
-
-    if (rawBatch.length === 0) {
-      exhausted = true;
-      break;
-    }
-
-    const candidates = rawBatch.map(mapReleaseGroupCandidate);
-    const enriched = await Promise.all(
-      candidates.map((candidate) => enrichCandidateWithFormats(candidate, appName, selectedFormats)),
-    );
-
-    for (const group of enriched) {
-      if (group) survivors.push(group);
-    }
-
-    currentOffset += rawBatch.length;
-    if (currentOffset >= rawCount) {
-      exhausted = true;
-      break;
-    }
-  }
-
-  return {
-    groups: survivors.slice(0, pageSize),
-    rawCount,
-    exhausted,
-    hitRetryCap: rounds >= MAX_RAW_BATCHES_PER_PAGE && survivors.length < pageSize,
-  };
+  return { groups, rawCount };
 }
 
 /**
@@ -358,15 +284,14 @@ async function fetchFilteredReleaseGroupPage(
 async function collectDiscoverPage(
   query: string,
   appName: string,
-  selectedFormats: SearchFormat[],
   page: number,
   pageSize: number,
-): Promise<{ groups: FilteredReleaseGroup[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
+): Promise<{ groups: EnrichedReleaseGroup[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
   const normalizedQuery = normalizeSearchInput(query);
   const exactQuery = buildExactSearchQuery(normalizedQuery);
   const offset = (page - 1) * pageSize;
 
-  const exactPage = await fetchFilteredReleaseGroupPage(exactQuery, appName, selectedFormats, offset, pageSize);
+  const exactPage = await fetchReleaseGroupPage(exactQuery, appName, offset, pageSize);
   const exactTotal = exactPage.rawCount;
 
   const canUseFallback = normalizedQuery.includes(' ');
@@ -375,63 +300,15 @@ async function collectDiscoverPage(
 
   if (offset >= exactTotal && hasDistinctFallback) {
     const fallbackOffset = offset - exactTotal;
-    const fallbackPage = await fetchFilteredReleaseGroupPage(
-      fallbackQuery,
-      appName,
-      selectedFormats,
-      fallbackOffset,
-      pageSize,
-    );
+    const fallbackPage = await fetchReleaseGroupPage(fallbackQuery, appName, fallbackOffset, pageSize);
     const total = exactTotal + fallbackPage.rawCount;
-    const isTotalExact = !fallbackPage.hitRetryCap;
-    const hasMore = isTotalExact ? fallbackOffset + fallbackPage.groups.length < fallbackPage.rawCount : true;
+    const hasMore = fallbackOffset + fallbackPage.groups.length < fallbackPage.rawCount;
 
-    return { groups: fallbackPage.groups, total, isTotalExact, hasMore };
+    return { groups: fallbackPage.groups, total, isTotalExact: true, hasMore };
   }
 
-  // The exact query's raw candidates for this page were fully drained
-  // (`exhausted`) without filling the page — e.g. the only matching
-  // release-group(s) turned out to have no release in the requested
-  // format(s). `exhausted` means there is provably nothing more to get from
-  // the exact query, so rather than reporting its raw (pre-format-filter)
-  // count as `total` while `groups` comes back short, top the page up from
-  // the fallback query (if one exists) before finalizing total/hasMore. The
-  // fallback space is always untouched here — it's only ever queried once a
-  // later page's offset crosses exactTotal (the branch above), which hasn't
-  // happened for this page since we're past that check.
-  if (exactPage.exhausted && exactPage.groups.length < pageSize) {
-    const remaining = pageSize - exactPage.groups.length;
-    const fallbackTopUp = hasDistinctFallback
-      ? await fetchFilteredReleaseGroupPage(fallbackQuery, appName, selectedFormats, 0, remaining)
-      : { groups: [] as FilteredReleaseGroup[], rawCount: 0, exhausted: true, hitRetryCap: false };
-
-    const seen = new Set(exactPage.groups.map((group) => group.releaseGroupId));
-    const topUpGroups = fallbackTopUp.groups.filter((group) => !seen.has(group.releaseGroupId));
-    const combinedGroups = [...exactPage.groups, ...topUpGroups].slice(0, pageSize);
-
-    const isTotalExact = !fallbackTopUp.hitRetryCap;
-    const hasMore = !isTotalExact;
-
-    return { groups: combinedGroups, total: combinedGroups.length, isTotalExact, hasMore };
-  }
-
-  const isTotalExact = !exactPage.hitRetryCap;
-  const exactHasMore = offset + exactPage.groups.length < exactTotal;
-  const hasMore = isTotalExact ? exactHasMore : true;
-
-  return { groups: exactPage.groups, total: exactTotal, isTotalExact, hasMore };
-}
-
-function matchesRequestedFormat(format: string | undefined, selectedFormats: SearchFormat[]): boolean {
-  if (!format || selectedFormats.length === 0) return false;
-  const lower = format.toLowerCase();
-  const wantsVinyl = selectedFormats.includes('vinyl');
-  const wantsCd = selectedFormats.includes('cd');
-
-  return (
-    (wantsVinyl && /vinyl|\blp\b/.test(lower)) ||
-    (wantsCd && /\bcd\b/.test(lower))
-  );
+  const hasMore = offset + exactPage.groups.length < exactTotal;
+  return { groups: exactPage.groups, total: exactTotal, isTotalExact: true, hasMore };
 }
 
 /** True for failures worth retrying: request timeouts and transient server-side errors (not 4xx client errors). */
@@ -557,32 +434,26 @@ function mapReleaseGroupCandidate(rg: MusicBrainzReleaseGroupSearchResult): Cand
 
 /**
  * Fetches a candidate release-group's full release list (reusing the same
- * lookup the "expand releases" endpoint uses) to determine which formats it
- * has available. Returns `undefined` if none of its releases match
- * `selectedFormats` — the caller drops these candidates from the page.
+ * lookup the "expand releases" endpoint uses) and enriches it with its real
+ * format info — never drops the candidate, regardless of what formats it
+ * does or doesn't have. A release with no discernible format contributes the
+ * literal string 'Unknown' rather than being silently omitted, mirroring how
+ * MusicBrainz's own site represents this. See musicbrainz-data-model.md for
+ * why filtering by format happens client-side, not here.
  */
-async function enrichCandidateWithFormats(
+async function enrichCandidate(
   candidate: CandidateReleaseGroup,
   appName: string,
-  selectedFormats: SearchFormat[],
-): Promise<FilteredReleaseGroup | undefined> {
+): Promise<EnrichedReleaseGroup> {
   const releases = await fetchReleasesByGroupId(candidate.releaseGroupId, appName);
   const mapped = releases.map((release) => mapRelease(release, candidate.releaseGroupId));
-  const matching = mapped.filter((release) => matchesRequestedFormat(release.format, selectedFormats));
-
-  if (matching.length === 0) {
-    return undefined;
-  }
-
-  const availableFormats = Array.from(
-    new Set(matching.map((release) => release.format).filter((format): format is string => Boolean(format))),
-  );
+  const availableFormats = Array.from(new Set(mapped.map((release) => release.format ?? 'Unknown')));
 
   return {
     ...candidate,
     thumbnailUrl: `https://coverartarchive.org/release-group/${candidate.releaseGroupId}/front-250`,
     availableFormats,
-    totalReleases: matching.length,
+    totalReleases: mapped.length,
   };
 }
 
