@@ -26,6 +26,17 @@ const rgPage2 = loadRgFixture('release-group-search-qotsa-page2-real.json');
 const rgPage3 = loadRgFixture('release-group-search-qotsa-page3-real.json');
 const rgReleasesById = loadRgFixture('release-group-releases-by-id-qotsa-real.json') as Record<string, unknown>;
 
+// Real "Laminated Denim" case: exactly 1 release-group matches (both the
+// exact-phrase and fallback AND-of-terms queries return the same single
+// group), and its only 2 releases are both Digital Media — no vinyl or CD
+// release exists for this album at all. This reproduces a real report: the
+// UI showed "1+ matching release groups loaded" while the results list and
+// "shown on this page" count were 0 — a genuine discrepancy between the
+// reported total and what's actually displayable under the selected formats.
+const laminatedDenimExact = loadRgFixture('release-group-search-laminated-denim-real.json');
+const laminatedDenimFallback = loadRgFixture('release-group-search-laminated-denim-fallback-real.json');
+const laminatedDenimReleases = loadRgFixture('release-releases-by-group-laminated-denim-real.json');
+
 /** Mocks both /ws/2/release-group (paged by offset, from the three real page fixtures) and /ws/2/release?query=rgid:X (from the consolidated real releases-by-id fixture). */
 function mockReleaseGroupEndpoints(): typeof fetch {
     return (async (input) => {
@@ -502,6 +513,53 @@ test('POST /api/search/groups switches to the fallback query at the correct disj
             requestedOffsets.includes(2),
             `expected a fallback request at offset 2, got offsets: ${requestedOffsets.join(', ')}`,
         );
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups never reports a total higher than the groups actually returned (real Laminated Denim data)', async () => {
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            const query = url.searchParams.get('query') ?? '';
+            const isExactQuery = query.includes('"Laminated Denim"');
+            return jsonResponse(isExactQuery ? laminatedDenimExact : laminatedDenimFallback);
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse(laminatedDenimReleases);
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        // Both formats selected: the album's only 2 releases are Digital
+        // Media, so neither matches vinyl or CD. The one matching
+        // release-group should be reported as zero results, not "1+".
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            query: 'Laminated Denim',
+            page: 1,
+            pageSize: 5,
+            formats: ['vinyl', 'cd'],
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.equal(res.json.groups.length, res.json.total, 'total must equal the number of groups actually returned');
+        assert.equal(res.json.total, 0);
+        assert.equal(res.json.hasMore, false);
+        assert.equal(res.json.isTotalExact, true);
+        assert.deepEqual(res.json.groups, []);
     } finally {
         await closeServer(server);
     }
