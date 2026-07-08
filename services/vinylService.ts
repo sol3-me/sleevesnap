@@ -6,7 +6,7 @@ import {
   VinylRecord,
 } from '../types';
 
-const CACHE_PREFIX = 'sleevesnap:search:v4:';
+const CACHE_PREFIX = 'sleevesnap:search:v5:';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
 

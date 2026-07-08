@@ -4,7 +4,7 @@ import { VinylCard } from './components/VinylCard';
 import { addRecord, getCollection, getUser, loginUser, logoutUser, removeRecord } from './services/storageService';
 import { logEvent, logWarn } from './services/telemetry';
 import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vinylService';
-import { SearchGroupReleases, SearchResultGroup, SearchResultPage, UserProfile, ViewState, VinylRecord } from './types';
+import { SearchGroupReleases, SearchRelease, SearchResultGroup, SearchResultPage, UserProfile, ViewState, VinylRecord } from './types';
 
 const SEARCH_PAGE_SIZE = 5;
 const SEARCH_FILTERS_KEY = 'sleevesnap:search-filters:v2';
@@ -33,6 +33,43 @@ function bucketForFormat(rawFormat: string): string {
 
 function bucketsForGroup(group: SearchResultGroup): string[] {
   return Array.from(new Set(group.availableFormats.map(bucketForFormat)));
+}
+
+// Shared ordering for format buckets: Vinyl/CD first, then everything else
+// alphabetically, Unknown last. Used both for the top-level filter
+// checkboxes and for grouping releases inside an expanded group's "Show
+// releases" accordion, so the two stay visually consistent.
+function sortFormatBuckets(buckets: string[]): string[] {
+  const priority = PRIORITY_FORMAT_BUCKETS.filter((bucket) => buckets.includes(bucket));
+  const rest = buckets
+    .filter((bucket) => bucket !== 'Unknown' && !PRIORITY_FORMAT_BUCKETS.includes(bucket))
+    .sort((a, b) => a.localeCompare(b));
+  const unknown = buckets.includes('Unknown') ? ['Unknown'] : [];
+  return [...priority, ...rest, ...unknown];
+}
+
+// Groups a flat release list into format buckets (same grouping as the
+// top-level filter), sorted the same way, while preserving each release's
+// exact original format string (e.g. "2xCD", "CD-R") — grouping is purely a
+// display concern, not a data-collapsing one.
+function groupReleasesByFormatBucket<T extends { format?: string }>(
+  releases: T[],
+): Array<{ bucket: string; releases: T[] }> {
+  const byBucket = new Map<string, T[]>();
+  for (const release of releases) {
+    const bucket = bucketForFormat(release.format ?? 'Unknown');
+    const existing = byBucket.get(bucket);
+    if (existing) {
+      existing.push(release);
+    } else {
+      byBucket.set(bucket, [release]);
+    }
+  }
+
+  return sortFormatBuckets(Array.from(byBucket.keys())).map((bucket) => ({
+    bucket,
+    releases: byBucket.get(bucket)!,
+  }));
 }
 
 // Sparse: only buckets the user has explicitly toggled are stored. Anything
@@ -320,12 +357,7 @@ export default function App() {
   );
 
   const sortedBuckets = useMemo(() => {
-    const priority = PRIORITY_FORMAT_BUCKETS.filter((bucket) => discoveredFormatBuckets.includes(bucket));
-    const rest = discoveredFormatBuckets
-      .filter((bucket) => bucket !== 'Unknown' && !PRIORITY_FORMAT_BUCKETS.includes(bucket))
-      .sort((a, b) => a.localeCompare(b));
-    const unknown = discoveredFormatBuckets.includes('Unknown') ? ['Unknown'] : [];
-    return [...priority, ...rest, ...unknown];
+    return sortFormatBuckets(discoveredFormatBuckets);
   }, [discoveredFormatBuckets]);
 
   const filteredGroups = useMemo(
@@ -593,6 +625,7 @@ export default function App() {
         {filteredGroups.map((group) => {
           const details = groupReleases[group.releaseGroupId];
           const filteredReleases = getFilteredReleases(group);
+          const groupedReleases = groupReleasesByFormatBucket<SearchRelease>(filteredReleases);
           const isExpanded = Boolean(expandedGroups[group.releaseGroupId]);
           const loadingGroup = Boolean(loadingGroupIds[group.releaseGroupId]);
           const releaseCount = group.totalReleases;
@@ -613,7 +646,14 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-bold text-white truncate">{group.title}</h3>
+                  <h3 className="text-lg font-bold text-white truncate">
+                    {group.title}
+                    {group.primaryType && (
+                      <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-vinyl-700 text-gray-300">
+                        {group.primaryType}
+                      </span>
+                    )}
+                  </h3>
                   <p className="text-sm text-gray-400 truncate">{group.artist}</p>
                   <p className="text-xs text-gray-500 mt-1">
                     {[group.firstReleaseDate?.slice(0, 4), `${releaseCount} release${releaseCount === 1 ? '' : 's'}`]
@@ -665,46 +705,55 @@ export default function App() {
                     </div>
                   )}
 
-                  {filteredReleases.map((record) => {
-                    const country = formatCountry(record.country);
-                    return (
-                      <div key={record.id} className="flex bg-vinyl-900 rounded-lg p-3 border border-vinyl-700 gap-3">
-                        <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0">
-                          {renderCoverThumb(record.id, record.title, [record.coverUrl, group.thumbnailUrl])}
-                        </div>
-                        <div className="min-w-0 flex-1 flex flex-col justify-between">
-                          <div>
-                            <h4 className="font-bold text-white truncate">{record.title}</h4>
-                            <p className="text-sm text-gray-400 truncate">{record.artist}</p>
-                            <p className="text-xs text-gray-500 mt-1 truncate">
-                              {[record.year, country, record.format, record.releaseStatus, record.genre]
-                                .filter(Boolean)
-                                .join(' • ') || 'Metadata unavailable'}
-                            </p>
-                            <p className="text-xs text-gray-500 truncate">
-                              {record.edition ? `${record.edition} • ` : ''}
-                              {record.musicBrainzId && (
-                                <a
-                                  href={record.releaseUrl ?? `https://musicbrainz.org/release/${record.musicBrainzId}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-vinyl-accent hover:text-white underline"
+                  {groupedReleases.map(({ bucket, releases }) => (
+                    <div key={bucket}>
+                      <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2 mt-3 first:mt-0">
+                        {bucket}
+                      </h5>
+                      <div className="space-y-3">
+                        {releases.map((record) => {
+                          const country = formatCountry(record.country);
+                          return (
+                            <div key={record.id} className="flex bg-vinyl-900 rounded-lg p-3 border border-vinyl-700 gap-3">
+                              <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0">
+                                {renderCoverThumb(record.id, record.title, [record.coverUrl, group.thumbnailUrl])}
+                              </div>
+                              <div className="min-w-0 flex-1 flex flex-col justify-between">
+                                <div>
+                                  <h4 className="font-bold text-white truncate">{record.title}</h4>
+                                  <p className="text-sm text-gray-400 truncate">{record.artist}</p>
+                                  <p className="text-xs text-gray-500 mt-1 truncate">
+                                    {[record.year, country, record.format, record.releaseStatus, record.genre]
+                                      .filter(Boolean)
+                                      .join(' • ') || 'Metadata unavailable'}
+                                  </p>
+                                  <p className="text-xs text-gray-500 truncate">
+                                    {record.edition ? `${record.edition} • ` : ''}
+                                    {record.musicBrainzId && (
+                                      <a
+                                        href={record.releaseUrl ?? `https://musicbrainz.org/release/${record.musicBrainzId}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-vinyl-accent hover:text-white underline"
+                                      >
+                                        MBID {record.musicBrainzId.slice(0, 8)}
+                                      </a>
+                                    )}
+                                  </p>
+                                </div>
+                                <button
+                                  onClick={() => handleAddToCollection(record)}
+                                  className="self-end text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-1 rounded transition-colors"
                                 >
-                                  MBID {record.musicBrainzId.slice(0, 8)}
-                                </a>
-                              )}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => handleAddToCollection(record)}
-                            className="self-end text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-1 rounded transition-colors"
-                          >
-                            Add to Collection
-                          </button>
-                        </div>
+                                  Add to Collection
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
