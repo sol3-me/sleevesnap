@@ -431,6 +431,44 @@ test('POST /api/search/groups returns every raw candidate from the batch, unfilt
     }
 });
 
+test('POST /api/search/groups surfaces MusicBrainz\'s primary-type (Album/Single/EP) so same-titled groups can be told apart (real data)', async () => {
+    // Real report: searching "Will of the People" returns two separate
+    // MusicBrainz release-groups both by Muse with the identical title — one
+    // is a Single (a pre-release teaser, digital-only) and one is the actual
+    // Album (with vinyl/CD editions). Our own type=album query param doesn't
+    // reliably filter these apart (confirmed directly against the live API:
+    // it still returns Single- and EP-type groups), so the UI needs the raw
+    // primary-type surfaced to distinguish them instead of silently treating
+    // every result as if it were the same kind of thing.
+    globalThis.fetch = mockReleaseGroupEndpoints();
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            query: 'queens of the stone age',
+            page: 1,
+            pageSize: 5,
+        });
+
+        assert.equal(res.statusCode, 200);
+        const byId = new Map(
+            res.json.groups.map((g: { releaseGroupId: string }) => [g.releaseGroupId, g]),
+        );
+
+        assert.equal(
+            (byId.get('17ee0d7f-4a9d-317f-a0b0-8ca528a34b19') as { primaryType?: string }).primaryType,
+            'Album',
+        );
+        assert.equal(
+            (byId.get('351ed669-d97b-4b2e-80c2-e9c504992c13') as { primaryType?: string }).primaryType,
+            'EP',
+        );
+    } finally {
+        await closeServer(server);
+    }
+});
+
 test('POST /api/search/groups switches to the fallback query at the correct disjoint offset once the exact query is exhausted', async () => {
     const requestedOffsets: number[] = [];
     globalThis.fetch = (async (input) => {
