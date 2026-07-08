@@ -9,15 +9,59 @@ import { searchRouter, searchReleasesByText } from './search.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Real MusicBrainz response, captured via:
-//   curl "https://musicbrainz.org/ws/2/release?query=(releasegroup:\"queens of
-//   the stone age\" OR release:\"queens of the stone age\" OR
-//   artist:\"queens of the stone age\")&fmt=json&type=album&inc=media&limit=100&offset=0"
-// Regression fixture for a real pagination bug report: page 2 of the
-// Discover search was coming back empty for this exact query.
-const qotsaFixture = JSON.parse(
-  fs.readFileSync(path.join(__dirname, '__fixtures__', 'qotsa-release-search-real.json'), 'utf-8'),
-);
+// Real /ws/2/release-group search responses for "queens of the stone age",
+// captured live at offset 0/5/10 (limit=5 each), plus a consolidated map of
+// real /ws/2/release?query=rgid:X responses (format info) for every
+// candidate release-group id appearing across those three pages. Together
+// these reproduce a genuine real-world case: only 2 of the first 15
+// candidate release-groups have any vinyl release (most of the rest are
+// digital-only tribute/parody releases) — a faithful regression fixture for
+// the release-group-primary search refactor.
+function loadRgFixture(name: string) {
+  return JSON.parse(fs.readFileSync(path.join(__dirname, '__fixtures__', name), 'utf-8'));
+}
+
+const rgPage1 = loadRgFixture('release-group-search-qotsa-page1-real.json');
+const rgPage2 = loadRgFixture('release-group-search-qotsa-page2-real.json');
+const rgPage3 = loadRgFixture('release-group-search-qotsa-page3-real.json');
+const rgReleasesById = loadRgFixture('release-group-releases-by-id-qotsa-real.json') as Record<string, unknown>;
+
+/** Mocks both /ws/2/release-group (paged by offset, from the three real page fixtures) and /ws/2/release?query=rgid:X (from the consolidated real releases-by-id fixture). */
+function mockReleaseGroupEndpoints(): typeof fetch {
+    return (async (input) => {
+        const target =
+            typeof input === 'string'
+                ? input
+                : input instanceof URL
+                    ? input.toString()
+                    : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            const offset = url.searchParams.get('offset');
+            if (offset === '0') return jsonResponse(rgPage1);
+            if (offset === '5') return jsonResponse(rgPage2);
+            if (offset === '10') return jsonResponse(rgPage3);
+            return jsonResponse({ count: rgPage1.count, offset: Number(offset), 'release-groups': [] });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            const rgidParam = url.searchParams.get('query') ?? '';
+            const match = /rgid:(\S+)/.exec(rgidParam);
+            const rgid = match?.[1];
+            if (rgid && rgReleasesById[rgid]) {
+                return jsonResponse(rgReleasesById[rgid]);
+            }
+            return jsonResponse({ releases: [] });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+}
 
 const originalFetch = globalThis.fetch;
 
@@ -252,78 +296,188 @@ test('POST /api/search asks MusicBrainz for media and defaults to vinyl-only fil
     }
 });
 
-test('POST /api/search/groups paginates filtered release groups instead of raw API total', async () => {
+test('POST /api/search/groups queries the release-group endpoint directly with the exact Lucene query and type=album', async () => {
+    let capturedUrl: URL | undefined;
     globalThis.fetch = (async (input) => {
         const target =
-            typeof input === 'string'
-                ? input
-                : input instanceof URL
-                    ? input.toString()
-                    : input.url;
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const url = new URL(target);
-
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({ count: 1, 'release-groups': [
+                {
+                    id: 'g1',
+                    title: 'Rated R',
+                    'first-release-date': '2000-01-01',
+                    'primary-type': 'Album',
+                    'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                },
+            ] });
+        }
         if (url.pathname === '/ws/2/release') {
-            assert.equal(url.searchParams.get('inc'), 'media');
-            assert.equal(url.searchParams.get('offset'), '0');
-            assert.equal(
-                url.searchParams.get('query'),
-                '(releasegroup:"Rated R" OR release:"Rated R" OR artist:"Rated R")',
-            );
-
             return jsonResponse({
-                count: 9999,
                 releases: [
                     {
                         id: 'r1',
                         title: 'Rated R',
-                        date: '2000-01-01',
                         media: [{ format: '12" Vinyl' }],
-                        'artist-credit': [{ artist: { name: 'Artist A' } }],
-                        'release-group': { id: 'g1', title: 'Rated R', 'primary-type': 'Album' },
+                        'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                        'release-group': { id: 'g1', title: 'Rated R' },
                     },
+                ],
+            });
+        }
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        await requestJson(port, '/api/search/groups', 'POST', {
+            query: 'Rated R',
+            page: 1,
+            pageSize: 5,
+            formats: ['vinyl'],
+        });
+
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        assert.equal(capturedUrl!.searchParams.get('type'), 'album');
+        assert.equal(capturedUrl!.searchParams.get('limit'), '5');
+        assert.equal(capturedUrl!.searchParams.get('offset'), '0');
+        assert.equal(
+            capturedUrl!.searchParams.get('query'),
+            '(releasegroup:"Rated R" OR release:"Rated R" OR artist:"Rated R")',
+        );
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups fills a full page from the first raw batch when enough candidates match (real data)', async () => {
+    globalThis.fetch = mockReleaseGroupEndpoints();
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            query: 'queens of the stone age',
+            page: 1,
+            pageSize: 5,
+            formats: ['vinyl', 'cd'],
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.equal(res.json.total, 96);
+        assert.equal(res.json.isTotalExact, true);
+        assert.equal(res.json.hasMore, true);
+        assert.deepEqual(
+            res.json.groups.map((g: { releaseGroupId: string }) => g.releaseGroupId),
+            [
+                '17ee0d7f-4a9d-317f-a0b0-8ca528a34b19', // Queens of the Stone Age (vinyl)
+                '351ed669-d97b-4b2e-80c2-e9c504992c13', // Kyuss / Queens of the Stone Age (CD)
+                '95335849-2536-344f-acb6-0424c7d56411', // Queens of the Stone Age / Beaver (vinyl)
+                '1893cf55-0a80-4465-890b-6da7db246f0e', // Uncovered Queens of the Stone Age (CD)
+                'd6657084-d471-3b6a-9b6d-17621da96cdb', // Lullaby Renditions of Queens of the Stone Age (CD)
+            ],
+        );
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups excludes format-mismatched candidates and gives up gracefully after the retry cap (real data)', async () => {
+    let releaseGroupSearchCalls = 0;
+    const baseFetch = mockReleaseGroupEndpoints();
+    globalThis.fetch = (async (input, init) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (new URL(target).pathname === '/ws/2/release-group') releaseGroupSearchCalls += 1;
+        return baseFetch(input, init);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        // Vinyl-only: of the 15 real candidates across pages 1-3 (offsets
+        // 0/5/10), only 2 have any vinyl release — the rest are digital-only
+        // tribute/parody releases. This should exhaust all 3 retry rounds and
+        // still come back with just those 2, honestly marked as inexact.
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            query: 'queens of the stone age',
+            page: 1,
+            pageSize: 5,
+            formats: ['vinyl'],
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.equal(res.json.isTotalExact, false);
+        assert.equal(res.json.hasMore, true);
+        assert.deepEqual(
+            res.json.groups.map((g: { releaseGroupId: string }) => g.releaseGroupId),
+            [
+                '17ee0d7f-4a9d-317f-a0b0-8ca528a34b19', // Queens of the Stone Age
+                '95335849-2536-344f-acb6-0424c7d56411', // Queens of the Stone Age / Beaver
+            ],
+        );
+        assert.equal(releaseGroupSearchCalls, 3, 'should stop after exactly 3 raw-batch rounds');
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups switches to the fallback query at the correct disjoint offset once the exact query is exhausted', async () => {
+    const requestedOffsets: number[] = [];
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            const query = url.searchParams.get('query') ?? '';
+            const offset = Number(url.searchParams.get('offset'));
+            const isExactQuery = query.includes('"tiny rare album"');
+            requestedOffsets.push(offset);
+
+            if (isExactQuery) {
+                // The exact phrase only ever matches 3 release-groups, total.
+                if (offset >= 3) return jsonResponse({ count: 3, offset, 'release-groups': [] });
+                return jsonResponse({
+                    count: 3,
+                    offset,
+                    'release-groups': [
+                        { id: `exact-${offset}`, title: 'Tiny Rare Album', 'artist-credit': [{ artist: { name: 'X' } }] },
+                    ],
+                });
+            }
+
+            // Fallback (term-AND) query has plenty of results.
+            return jsonResponse({
+                count: 50,
+                offset,
+                'release-groups': [
+                    { id: `fallback-${offset}`, title: 'Tiny Rare Album (Fallback)', 'artist-credit': [{ artist: { name: 'X' } }] },
+                ],
+            });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
                     {
-                        id: 'r2',
-                        title: 'Rated R',
-                        date: '2001-01-01',
-                        media: [{ format: 'CD' }],
-                        'artist-credit': [{ artist: { name: 'Artist B' } }],
-                        'release-group': { id: 'g2', title: 'Rated R' },
-                    },
-                    {
-                        id: 'r3',
-                        title: 'Rated R',
-                        date: '2002-01-01',
+                        id: 'r1',
+                        title: 'Tiny Rare Album',
                         media: [{ format: '12" Vinyl' }],
-                        'artist-credit': [{ artist: { name: 'Artist C' } }],
-                        'release-group': { id: 'g3', title: 'Rated R' },
-                    },
-                    {
-                        id: 'r4',
-                        title: 'Rated R',
-                        date: '2003-01-01',
-                        media: [{ format: 'Digital Media' }],
-                        'artist-credit': [{ artist: { name: 'Artist D' } }],
-                        'release-group': { id: 'g4', title: 'Rated R' },
-                    },
-                    {
-                        id: 'r5',
-                        title: 'Rated R',
-                        date: '2004-01-01',
-                        media: [{ format: '12" Vinyl' }],
-                        'artist-credit': [{ artist: { name: 'Artist E' } }],
-                        'release-group': { id: 'g5', title: 'Rated R' },
+                        'artist-credit': [{ artist: { name: 'X' } }],
+                        'release-group': { id: 'ignored' },
                     },
                 ],
             });
         }
 
-        if (url.pathname === '/ws/2/release-group/g1') {
-            return jsonResponse({
-                relations: [{ type: 'discogs', url: { resource: 'https://www.discogs.com/master/1001' } }],
-            });
-        }
-
-        if (url.pathname === '/ws/2/release-group/g3') {
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
             return jsonResponse({ relations: [] });
         }
 
@@ -333,26 +487,21 @@ test('POST /api/search/groups paginates filtered release groups instead of raw A
     const { server, port } = await startTestServer();
 
     try {
+        // Page 2 at pageSize 5 requests offset 5, which is already past the
+        // exact query's total of 3 — the fallback query should be queried at
+        // offset (5 - 3) = 2, not offset 5.
         const res = await requestJson(port, '/api/search/groups', 'POST', {
-            query: 'Rated R',
-            page: 1,
-            pageSize: 2,
+            query: 'tiny rare album',
+            page: 2,
+            pageSize: 5,
             formats: ['vinyl'],
         });
 
         assert.equal(res.statusCode, 200);
-        assert.equal(res.json.page, 1);
-        assert.equal(res.json.pageSize, 2);
-        assert.equal(res.json.total, 3);
-        assert.equal(res.json.isTotalExact, true);
-        assert.equal(res.json.hasMore, true);
-        assert.equal(res.json.groups.length, 2);
-        assert.deepEqual(
-            res.json.groups.map((g: { releaseGroupId: string }) => g.releaseGroupId),
-            ['g1', 'g3'],
+        assert.ok(
+            requestedOffsets.includes(2),
+            `expected a fallback request at offset 2, got offsets: ${requestedOffsets.join(', ')}`,
         );
-        assert.equal(res.json.groups[0].discogsMasterUrl, 'https://www.discogs.com/master/1001');
-        assert.deepEqual(res.json.groups[0].availableFormats, ['12" Vinyl']);
     } finally {
         await closeServer(server);
     }
@@ -381,93 +530,6 @@ test('POST /api/search/groups returns empty page when no formats are selected', 
         assert.equal(res.json.isTotalExact, true);
         assert.deepEqual(res.json.groups, []);
         assert.equal(fetchCalls, 0);
-    } finally {
-        await closeServer(server);
-    }
-});
-
-test('POST /api/search/groups paginates a real MusicBrainz response correctly (regression: page 2 was empty)', async () => {
-    globalThis.fetch = (async (input) => {
-        const target =
-            typeof input === 'string'
-                ? input
-                : input instanceof URL
-                    ? input.toString()
-                    : input.url;
-        const url = new URL(target);
-
-        if (url.pathname === '/ws/2/release') {
-            // Every real request in this scenario is satisfied by a single
-            // 100-release batch at offset 0 (14 vinyl groups are found before
-            // the scan ever needs a second batch) — anything else returns no
-            // releases so an unexpected extra batch fails loudly instead of
-            // silently returning wrong data.
-            if (url.searchParams.get('offset') === '0') {
-                return jsonResponse(qotsaFixture);
-            }
-            return jsonResponse({ releases: [] });
-        }
-
-        if (url.pathname.startsWith('/ws/2/release-group/')) {
-            return jsonResponse({ relations: [] });
-        }
-
-        return jsonResponse({ error: 'not found' }, 404);
-    }) as typeof fetch;
-
-    const { server, port } = await startTestServer();
-
-    try {
-        const page1 = await requestJson(port, '/api/search/groups', 'POST', {
-            query: 'queens of the stone age',
-            page: 1,
-            pageSize: 5,
-            formats: ['vinyl'],
-        });
-
-        assert.equal(page1.statusCode, 200);
-        assert.equal(page1.json.total, 14);
-        assert.equal(page1.json.hasMore, true);
-        assert.equal(page1.json.isTotalExact, false);
-        assert.deepEqual(
-            page1.json.groups.map((g: { releaseGroupId: string }) => g.releaseGroupId),
-            [
-                '17ee0d7f-4a9d-317f-a0b0-8ca528a34b19', // Queens of the Stone Age
-                '95335849-2536-344f-acb6-0424c7d56411', // Queens of the Stone Age / Beaver
-                '7e7270ae-a73a-48e2-a8a6-20e1112e21f8', // Villains
-                'ca1bf5c4-5402-3f23-b5f2-1f54a1f2f237', // Make It Wit Chu
-                '5b2f4dfd-35db-4577-8641-249ef577f9a1', // Unplugged & Paralyzed
-            ],
-        );
-
-        const page2 = await requestJson(port, '/api/search/groups', 'POST', {
-            query: 'queens of the stone age',
-            page: 2,
-            pageSize: 5,
-            formats: ['vinyl'],
-        });
-
-        assert.equal(page2.statusCode, 200);
-        assert.equal(page2.json.total, 14);
-        // This is the exact bug report: page 2 was coming back with an empty
-        // `groups` array even though page 1 reported 14 matching groups.
-        assert.equal(page2.json.groups.length, 5, 'page 2 should not be empty');
-        assert.deepEqual(
-            page2.json.groups.map((g: { releaseGroupId: string }) => g.releaseGroupId),
-            [
-                'c92f73ee-527f-42ed-a556-fd615941e214', // …Like Clockwork
-                '5967a9ad-a0d5-34f7-bd53-f5d4bad80a67', // Lullabies to Paralyze
-                '21164f7f-6452-3889-aaaa-662b95772276', // The Fun Machine Took a Shit & Died
-                '7818bb84-ed80-3488-9f50-f9bf4347e372', // Rated R
-                '9f7ff015-241b-43cb-a02e-b5c61bbbfd70', // You Can't Put Your Arms Around a Memory
-            ],
-        );
-
-        // Guard against the underlying fragility this bug came from: paging
-        // through results must never show the same release group twice.
-        const page1Ids = new Set(page1.json.groups.map((g: { releaseGroupId: string }) => g.releaseGroupId));
-        const overlap = page2.json.groups.filter((g: { releaseGroupId: string }) => page1Ids.has(g.releaseGroupId));
-        assert.deepEqual(overlap, [], 'page 1 and page 2 must not share any release groups');
     } finally {
         await closeServer(server);
     }
