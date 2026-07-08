@@ -100,7 +100,7 @@ test('groupReleasesByFormatBucket groups by bucket while preserving each release
 });
 
 test('groupReleasesByFormatBucket buckets releases with no format under "Unknown"', () => {
-  const grouped = groupReleasesByFormatBucket([{ id: '1' }]);
+  const grouped = groupReleasesByFormatBucket<{ id: string; format?: string }>([{ id: '1' }]);
   assert.deepEqual(grouped, [{ bucket: 'Unknown', releases: [{ id: '1' }] }]);
 });
 

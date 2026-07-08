@@ -59,20 +59,6 @@ export interface SearchGroupReleases {
   releases: SearchRelease[];
 }
 
-export enum ViewState {
-  DASHBOARD = 'DASHBOARD',
-  SCANNER = 'SCANNER',
-  SEARCH = 'SEARCH',
-  SETTINGS = 'SETTINGS',
-  LOGIN = 'LOGIN'
-}
-
-export interface UserProfile {
-  name: string;
-  email: string;
-  avatarUrl: string;
-}
-
 export interface ScanResult {
   artist: string;
   title: string;
