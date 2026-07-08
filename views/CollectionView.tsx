@@ -153,9 +153,6 @@ export function CollectionView() {
           />
           <span className="text-xs text-gray-500 w-10 text-right">{collectionCardSize}</span>
         </div>
-        <Link to="/scan" className="md:hidden bg-vinyl-accent text-white p-3 rounded-full shadow-lg">
-          <Icons.Camera />
-        </Link>
       </div>
 
       {collection.length === 0 ? (

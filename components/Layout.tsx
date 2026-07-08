@@ -9,6 +9,8 @@ const navLinkActiveClassName = 'flex items-center gap-3 w-full p-3 rounded-lg tr
 const mobileNavLinkClassName = 'flex flex-col items-center text-gray-500';
 const mobileNavLinkActiveClassName = 'flex flex-col items-center text-vinyl-accent';
 
+const logoClassName = 'text-2xl font-bold text-vinyl-accent flex items-center gap-2';
+
 export function RootLayout() {
   const location = useLocation();
   const isScanRoute = location.pathname === '/scan';
@@ -19,10 +21,10 @@ export function RootLayout() {
         {/* Sidebar (Desktop) */}
         <aside className="hidden md:flex flex-col w-64 bg-vinyl-800 border-r border-vinyl-700">
           <div className="p-6">
-            <h1 className="text-2xl font-bold text-vinyl-accent flex items-center gap-2">
+            <Link to="/" className={logoClassName} activeOptions={{ exact: true }}>
               <span className="w-3 h-3 bg-white rounded-full"></span>
               sleevesnap
-            </h1>
+            </Link>
           </div>
           <nav className="flex-1 px-4 space-y-2">
             <Link to="/" className={navLinkClassName} activeProps={{ className: navLinkActiveClassName }} activeOptions={{ exact: true }}>
@@ -40,8 +42,11 @@ export function RootLayout() {
         {/* Main Content */}
         <main className="flex-1 relative overflow-y-auto h-full scroll-smooth">
           {/* Mobile Header */}
-          <header className="md:hidden flex justify-between items-center p-4 bg-vinyl-800/90 backdrop-blur-md sticky top-0 z-20 border-b border-vinyl-700">
-            <h1 className="text-xl font-bold text-vinyl-accent">sleevesnap</h1>
+          <header className="md:hidden flex items-center p-4 bg-vinyl-800/90 backdrop-blur-md sticky top-0 z-20 border-b border-vinyl-700">
+            <Link to="/" className={logoClassName} activeOptions={{ exact: true }}>
+              <span className="w-3 h-3 bg-white rounded-full"></span>
+              sleevesnap
+            </Link>
           </header>
 
           <Outlet />
