@@ -42,10 +42,14 @@ async function main(): Promise<void> {
         console.log(`Formats: ${FORMATS.join(', ') || '(none)'}`);
 
         for (const page of PAGES_TO_CHECK) {
+            // formats is not sent — the server no longer filters by format at
+            // all (see musicbrainz-data-model.md); FORMATS below is only
+            // used locally to simulate what the client-side checkbox filter
+            // would show for this page.
             const pageRes = await fetch(`${baseUrl}/api/search/groups`, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ query: QUERY, page, pageSize: PAGE_SIZE, formats: FORMATS }),
+                body: JSON.stringify({ query: QUERY, page, pageSize: PAGE_SIZE }),
             });
 
             const pageJson = (await pageRes.json()) as {
@@ -95,7 +99,7 @@ async function main(): Promise<void> {
                 );
             }
 
-            console.log(`  -> groups visible with Vinyl-only filter: ${vinylVisible}/${pageJson.groups.length}`);
+            console.log(`  -> groups that would match a client-side Vinyl-only filter: ${vinylVisible}/${pageJson.groups.length}`);
         }
     } finally {
         await new Promise<void>((resolve, reject) => {
