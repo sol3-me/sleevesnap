@@ -103,7 +103,10 @@ async function identifyWithGemini(imageBuffer: Buffer, requestId: string): Promi
   });
 
   if (!res.ok) {
-    throw new Error(`Gemini vision request failed (${res.status})`);
+    const bodyText = await res.text().catch(() => '<failed to read response body>');
+    throw new Error(
+      `Gemini vision request failed: model=${GEMINI_MODEL} status=${res.status} ${res.statusText} body=${bodyText.slice(0, 500)}`,
+    );
   }
 
   const data = (await res.json()) as {
@@ -149,7 +152,10 @@ async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promi
   });
 
   if (!res.ok) {
-    throw new Error(`OpenAI vision request failed (${res.status})`);
+    const bodyText = await res.text().catch(() => '<failed to read response body>');
+    throw new Error(
+      `OpenAI vision request failed: model=${OPENAI_MODEL} status=${res.status} ${res.statusText} body=${bodyText.slice(0, 500)}`,
+    );
   }
 
   const data = (await res.json()) as {

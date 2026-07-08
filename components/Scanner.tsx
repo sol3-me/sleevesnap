@@ -471,9 +471,15 @@ export const Scanner: React.FC<ScannerProps> = ({
             />
           )}
 
-          <p className="text-gray-300 text-sm">
-            Couldn't identify this record in your collection. Do you know what album it is?
-          </p>
+          {searchResults.length > 0 ? (
+            <p className="text-gray-300 text-sm">
+              Found a possible match below — confirm it, or search for something else.
+            </p>
+          ) : (
+            <p className="text-gray-300 text-sm">
+              Couldn't identify this record in your collection. Do you know what album it is?
+            </p>
+          )}
 
           {error && (
             <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>

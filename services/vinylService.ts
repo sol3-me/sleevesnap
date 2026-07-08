@@ -6,7 +6,7 @@ import {
   VinylRecord,
 } from '../types';
 
-const CACHE_PREFIX = 'sleevesnap:search:v1:';
+const CACHE_PREFIX = 'sleevesnap:search:v3:';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
 
@@ -150,19 +150,27 @@ export const searchVinylReleaseGroups = async (
   });
 
   if (!res.ok) {
-    return {
-      query,
-      page,
-      pageSize,
-      total: 0,
-      hasMore: false,
-      isTotalExact: true,
-      groups: [],
-    };
+    // Surface failures distinctly rather than faking a valid "no results"
+    // page — a caller silently treating a 502/timeout as "0 results found"
+    // is indistinguishable from a genuine empty search, which is exactly
+    // what made an earlier transient backend outage look like a pagination
+    // bug instead of a network error.
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Search failed (${res.status})`);
   }
 
   const result = (await res.json()) as SearchResultPage;
-  setCached(cacheKey, result);
+
+  // Only cache confirmed-useful (non-empty) results. Caching a miss for 6
+  // hours means retyping the exact same partial query later — very common
+  // while iteratively narrowing a search — replays a stale "no results"
+  // instead of giving the (fast, cheap) MusicBrainz query another chance.
+  // Real example: "songs for the de" legitimately returns 0 matches, but
+  // that shouldn't be remembered as gospel for the rest of the session.
+  if (result.groups.length > 0) {
+    setCached(cacheKey, result);
+  }
+
   return result;
 };
 

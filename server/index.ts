@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -15,7 +16,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = Number(process.env.PORT ?? 3001);
+// SERVER_PORT is the backend's own listen port for local dev, where the
+// frontend (Vite, always :3000) and this server run as two separate
+// processes — vite.config.ts's dev proxy already targets SERVER_PORT.
+// PORT is the single-process port used in production/Docker (frontend and
+// backend served together); it must NOT double as the local dev backend
+// port, or it collides with Vite's hardcoded :3000.
+const PORT = Number(process.env.SERVER_PORT ?? process.env.PORT ?? 3001);
 const NODE_ENV = process.env.NODE_ENV ?? 'development';
 
 // Core middleware

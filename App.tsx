@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Scanner } from './components/Scanner';
 import { VinylCard } from './components/VinylCard';
 import { addRecord, getCollection, getUser, loginUser, logoutUser, removeRecord } from './services/storageService';
-import { logEvent } from './services/telemetry';
+import { logEvent, logWarn } from './services/telemetry';
 import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vinylService';
 import { SearchGroupReleases, SearchResultGroup, SearchResultPage, UserProfile, ViewState, VinylRecord } from './types';
 
@@ -219,6 +219,12 @@ export default function App() {
       setLoadingGroupIds({});
       setExpandedGroups({});
       setFailedCovers({});
+    } catch (err) {
+      // Leave the previously-shown results in place rather than replacing
+      // them with an empty page — a failed "next page" fetch shouldn't wipe
+      // out the page the user is already looking at.
+      logWarn('discover', 'Search failed', { query: queryToSearch, page, error: err instanceof Error ? err.message : String(err) });
+      showNotification('Search failed. Please try again.');
     } finally {
       setIsSearching(false);
     }

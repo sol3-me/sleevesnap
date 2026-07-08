@@ -112,6 +112,39 @@ test('returns empty array when both providers fail', async () => {
   assert.deepEqual(results, []);
 });
 
+test('logs the response status and body when a provider returns a non-2xx status', async () => {
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = urlOf(input);
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return jsonResponse({ error: { message: 'The model is overloaded. Please try again later.' } }, 503);
+    }
+    if (url.includes('api.openai.com')) {
+      return jsonResponse({ error: { message: 'Your organization must be verified to use this model.' } }, 403);
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  }) as typeof fetch;
+
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.join(' '));
+  };
+
+  try {
+    await identifyVinyl(fixtureBuffer);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  const geminiWarning = warnings.find((line) => line.includes('Gemini call failed'));
+  const openaiWarning = warnings.find((line) => line.includes('OpenAI call failed'));
+
+  assert.ok(geminiWarning?.includes('503'), 'Gemini failure log should include the status code');
+  assert.ok(geminiWarning?.includes('overloaded'), 'Gemini failure log should include the response body');
+  assert.ok(openaiWarning?.includes('403'), 'OpenAI failure log should include the status code');
+  assert.ok(openaiWarning?.includes('verified'), 'OpenAI failure log should include the response body');
+});
+
 test('returns empty array and makes no network calls when no API keys are configured', async () => {
   delete process.env.GEMINI_API_KEY;
   delete process.env.OPENAI_API_KEY;
