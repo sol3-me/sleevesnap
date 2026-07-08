@@ -418,6 +418,19 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(searchPage.total / searchPage.pageSize));
 
+  // Mirrors the server's own dedup key (lower(artist) + lower(title), see
+  // server/routes/collection.ts) so the button reflects collection state
+  // before the user even clicks it, instead of only finding out via a 409.
+  const collectionKeys = useMemo(
+    () => new Set(collection.map((r) => `${r.artist.toLowerCase()}::${r.title.toLowerCase()}`)),
+    [collection],
+  );
+
+  const isInCollection = useCallback(
+    (artist: string, title: string) => collectionKeys.has(`${artist.toLowerCase()}::${title.toLowerCase()}`),
+    [collectionKeys],
+  );
+
   const getFilteredReleases = (group: SearchResultGroup) => {
     const detail = groupReleases[group.releaseGroupId];
     if (!detail) return [];
@@ -769,6 +782,7 @@ export default function App() {
                       <div className="space-y-3">
                         {releases.map((record) => {
                           const country = formatCountry(record.country);
+                          const alreadyOwned = isInCollection(record.artist, record.title);
                           return (
                             <div key={record.id} className="flex bg-vinyl-900 rounded-lg p-3 border border-vinyl-700 gap-3">
                               <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0">
@@ -798,10 +812,15 @@ export default function App() {
                                   </p>
                                 </div>
                                 <button
-                                  onClick={() => handleAddToCollection(record)}
-                                  className="self-end text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-1 rounded transition-colors"
+                                  onClick={() => !alreadyOwned && handleAddToCollection(record)}
+                                  disabled={alreadyOwned}
+                                  className={
+                                    alreadyOwned
+                                      ? 'self-end text-xs bg-green-700 text-green-100 px-3 py-1 rounded cursor-default'
+                                      : 'self-end text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-1 rounded transition-colors'
+                                  }
                                 >
-                                  Add to Collection
+                                  {alreadyOwned ? 'In Collection' : 'Add to Collection'}
                                 </button>
                               </div>
                             </div>
