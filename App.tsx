@@ -418,17 +418,46 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(searchPage.total / searchPage.pageSize));
 
-  // Mirrors the server's own dedup key (lower(artist) + lower(title), see
+  // Mirrors the server's own dedup key (musicBrainzId when present, see
   // server/routes/collection.ts) so the button reflects collection state
-  // before the user even clicks it, instead of only finding out via a 409.
-  const collectionKeys = useMemo(
-    () => new Set(collection.map((r) => `${r.artist.toLowerCase()}::${r.title.toLowerCase()}`)),
+  // before the user even clicks it. Two different pressings of the same
+  // album (e.g. an original US pressing vs. a later reissue) are distinct
+  // collectible items, not duplicates — only an exact pressing match (or,
+  // absent a musicBrainzId, an exact artist+title match) counts as owned.
+  const collectionMbids = useMemo(
+    () => new Set(collection.map((r) => r.musicBrainzId).filter((id): id is string => Boolean(id))),
     [collection],
   );
 
-  const isInCollection = useCallback(
-    (artist: string, title: string) => collectionKeys.has(`${artist.toLowerCase()}::${title.toLowerCase()}`),
-    [collectionKeys],
+  const collectionArtistTitleKeys = useMemo(
+    () =>
+      new Set(
+        collection
+          .filter((r) => !r.musicBrainzId)
+          .map((r) => `${r.artist.toLowerCase()}::${r.title.toLowerCase()}`),
+      ),
+    [collection],
+  );
+
+  const isReleaseOwned = useCallback(
+    (release: { musicBrainzId?: string; artist: string; title: string }) =>
+      release.musicBrainzId
+        ? collectionMbids.has(release.musicBrainzId)
+        : collectionArtistTitleKeys.has(`${release.artist.toLowerCase()}::${release.title.toLowerCase()}`),
+    [collectionMbids, collectionArtistTitleKeys],
+  );
+
+  // A release-group is "owned" if any pressing of it is already saved —
+  // shown as a group-level badge, separate from the per-release button
+  // above which reflects one specific pressing.
+  const collectionReleaseGroupIds = useMemo(
+    () => new Set(collection.map((r) => r.releaseGroupId).filter((id): id is string => Boolean(id))),
+    [collection],
+  );
+
+  const isGroupOwned = useCallback(
+    (releaseGroupId: string) => collectionReleaseGroupIds.has(releaseGroupId),
+    [collectionReleaseGroupIds],
   );
 
   const getFilteredReleases = (group: SearchResultGroup) => {
@@ -703,6 +732,7 @@ export default function App() {
             `${group.artist} ${group.title}`,
           )}&type=master`;
           const discogsGroupUrl = group.discogsMasterUrl ?? details?.discogsMasterUrl ?? discogsSearchUrl;
+          const groupOwned = isGroupOwned(group.releaseGroupId);
 
           return (
             <div key={group.releaseGroupId} className="bg-vinyl-800 rounded-xl border border-vinyl-700 overflow-hidden">
@@ -720,6 +750,14 @@ export default function App() {
                     {group.primaryType && (
                       <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-vinyl-700 text-gray-300">
                         {group.primaryType}
+                      </span>
+                    )}
+                    {groupOwned && (
+                      <span
+                        className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-700 text-green-100"
+                        title="You already own at least one pressing of this release"
+                      >
+                        In Collection
                       </span>
                     )}
                   </h3>
@@ -782,7 +820,7 @@ export default function App() {
                       <div className="space-y-3">
                         {releases.map((record) => {
                           const country = formatCountry(record.country);
-                          const alreadyOwned = isInCollection(record.artist, record.title);
+                          const alreadyOwned = isReleaseOwned(record);
                           return (
                             <div key={record.id} className="flex bg-vinyl-900 rounded-lg p-3 border border-vinyl-700 gap-3">
                               <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0">
