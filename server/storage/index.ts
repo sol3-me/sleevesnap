@@ -1,26 +1,15 @@
 import type { BlobStorageProvider } from './BlobStorageProvider.js';
 import { LocalFileSystemProvider } from './LocalFileSystemProvider.js';
-import { S3Provider } from './S3Provider.js';
 
 /**
- * Create and return a BlobStorageProvider based on the STORAGE_PROVIDER
- * environment variable.
- *
- *   STORAGE_PROVIDER=local  (default) → LocalFileSystemProvider
- *   STORAGE_PROVIDER=s3              → S3Provider (MinIO / AWS S3 / R2)
+ * Create the blob storage provider. Local filesystem only for now —
+ * sleevesnap runs self-hosted via Docker, so cover-art blobs are written to
+ * a Docker volume. The BlobStorageProvider interface exists as a seam for a
+ * future provider (e.g. Firebase Storage) when the app migrates off
+ * self-hosted infrastructure.
  */
 export function createStorageProvider(): BlobStorageProvider {
-  const providerName = (process.env.STORAGE_PROVIDER ?? 'local').toLowerCase();
-
-  switch (providerName) {
-    case 's3':
-      console.log('[storage] Using S3-compatible provider');
-      return new S3Provider();
-    case 'local':
-    default:
-      console.log('[storage] Using local filesystem provider');
-      return new LocalFileSystemProvider();
-  }
+  return new LocalFileSystemProvider();
 }
 
 export type { BlobStorageProvider } from './BlobStorageProvider.js';

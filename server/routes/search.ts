@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { logEvent, logWarn, newRequestId } from '../logger.js';
 
 export const searchRouter = Router();
 
@@ -80,6 +81,8 @@ interface SearchReleaseResult {
 
 // POST /api/search  – flat search list (kept for scanner compatibility)
 searchRouter.post('/', async (req, res) => {
+  const requestId = newRequestId();
+  const startedAt = Date.now();
   const { query, includeOtherFormats } = req.body as {
     query?: string;
     includeOtherFormats?: boolean;
@@ -90,6 +93,8 @@ searchRouter.post('/', async (req, res) => {
     return;
   }
 
+  logEvent('search', requestId, 'Manual search request', { query, includeOtherFormats: Boolean(includeOtherFormats) });
+
   const appName = process.env.MUSICBRAINZ_APP_NAME ?? 'sleevesnap';
 
   try {
@@ -97,15 +102,24 @@ searchRouter.post('/', async (req, res) => {
     const mapped = releases
       .map((release) => mapRelease(release))
       .filter((release) => Boolean(includeOtherFormats) || isVinylFormat(release.format));
+
+    logEvent('search', requestId, 'Manual search results', {
+      resultCount: mapped.length,
+      top: mapped.slice(0, 3).map((r) => `${r.artist} - ${r.title}`),
+      ms: Date.now() - startedAt,
+    });
+
     res.json(mapped);
   } catch (err) {
-    console.error('[search] Error querying MusicBrainz:', err);
+    logWarn('search', requestId, 'Manual search failed', { query, error: String(err) });
     res.status(502).json({ error: 'Failed to search records' });
   }
 });
 
 // POST /api/search/groups  – grouped by release group for the Discover view
 searchRouter.post('/groups', async (req, res) => {
+  const requestId = newRequestId();
+  const startedAt = Date.now();
   const { query, page, pageSize, formats } = req.body as {
     query?: string;
     page?: number;
@@ -128,7 +142,15 @@ searchRouter.post('/groups', async (req, res) => {
     );
     const selectedFormats = normalizeRequestedFormats(formats);
 
+    logEvent('search', requestId, 'Discover search request', {
+      query,
+      page: safePage,
+      pageSize: safePageSize,
+      formats: selectedFormats,
+    });
+
     if (selectedFormats.length === 0) {
+      logEvent('search', requestId, 'Discover search results', { resultCount: 0, reason: 'no formats selected' });
       res.json({
         query,
         page: safePage,
@@ -167,6 +189,15 @@ searchRouter.post('/groups', async (req, res) => {
       ? end < groupedResult.groups.length
       : true;
 
+    logEvent('search', requestId, 'Discover search results', {
+      resultCount: groups.length,
+      totalKnown: groupedResult.groups.length,
+      isTotalExact: groupedResult.isComplete,
+      hasMore,
+      top: groups.slice(0, 3).map((g) => `${g.artist} - ${g.title}`),
+      ms: Date.now() - startedAt,
+    });
+
     res.json({
       query,
       page: safePage,
@@ -177,7 +208,7 @@ searchRouter.post('/groups', async (req, res) => {
       groups,
     });
   } catch (err) {
-    console.error('[search/groups] Error querying MusicBrainz:', err);
+    logWarn('search', requestId, 'Discover search failed', { query, error: String(err) });
     res.status(502).json({ error: 'Failed to search records' });
   }
 });

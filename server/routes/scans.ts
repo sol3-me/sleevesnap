@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { Router } from 'express';
 import { db } from '../db.js';
 import { computeHash } from '../imageHash.js';
+import { logEvent, logWarn, newRequestId } from '../logger.js';
 import type { BlobStorageProvider } from '../storage/BlobStorageProvider.js';
 import { isSafeExternalUrl } from '../urlUtils.js';
 
@@ -116,10 +117,18 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
       coverUrl?: string;
     };
 
+    const requestId = newRequestId();
+
     if (!artist || !title) {
       res.status(400).json({ error: 'artist and title are required' });
       return;
     }
+
+    logEvent('scans', requestId, 'Save request', {
+      artist,
+      title,
+      source: capturedImage ? 'captured photo' : providedCoverUrl ? 'search result' : 'unknown',
+    });
 
     // Deduplicate by artist + title (case-insensitive)
     const existing = db
@@ -129,6 +138,7 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
       .get(artist, title) as CollectionRow | undefined;
 
     if (existing) {
+      logEvent('scans', requestId, 'Save skipped — already in collection', { recordId: existing.id });
       res.status(409).json({ error: 'Record already in collection', record: rowToRecord(existing) });
       return;
     }
@@ -149,7 +159,7 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
         try {
           phash = await computeHash(imageBuffer);
         } catch (hashErr) {
-          console.warn('[scans] Could not compute pHash for captured image:', hashErr);
+          logWarn('scans', requestId, 'Could not compute pHash for captured image', { error: String(hashErr) });
         }
 
         // Store via BlobStorageProvider (override coverUrl with the stored URL)
@@ -157,7 +167,7 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
         const storedUrl = await storage.put(key, imageBuffer, 'image/jpeg');
         coverUrl = storedUrl;
       } catch (err) {
-        console.warn('[scans] Could not store captured image, continuing without it:', err);
+        logWarn('scans', requestId, 'Could not store captured image, continuing without it', { error: String(err) });
       }
     }
 
@@ -222,6 +232,14 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
     const saved = db
       .prepare('SELECT * FROM collection WHERE id = ?')
       .get(id) as CollectionRow;
+
+    logEvent('scans', requestId, 'Saved to collection', {
+      recordId: id,
+      artist,
+      title,
+      hasPhash: Boolean(phash),
+      hasCoverUrl: Boolean(coverUrl),
+    });
 
     res.status(201).json({ success: true, record: rowToRecord(saved) });
   });

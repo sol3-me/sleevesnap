@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Scanner } from './components/Scanner';
 import { VinylCard } from './components/VinylCard';
 import { addRecord, getCollection, getUser, loginUser, logoutUser, removeRecord } from './services/storageService';
+import { logEvent } from './services/telemetry';
 import { getReleaseGroupReleases, searchVinylReleaseGroups } from './services/vinylService';
 import { SearchGroupReleases, SearchResultGroup, SearchResultPage, UserProfile, ViewState, VinylRecord } from './types';
 
@@ -70,6 +71,7 @@ export default function App() {
   const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false,
   );
+  const [pendingScanImage, setPendingScanImage] = useState<string | null>(null);
   const releasesRef = useRef<Record<string, SearchGroupReleases>>({});
   const loadingRef = useRef<Set<string>>(new Set());
 
@@ -113,17 +115,20 @@ export default function App() {
   const handleAddToCollection = async (record: VinylRecord) => {
     const success = await addRecord(record);
     if (success) {
+      logEvent('collection', 'Added to collection', { artist: record.artist, title: record.title });
       setCollection(await getCollection());
       showNotification(`Added "${record.title}" to collection`);
       // If we were searching, stay there, if scanning, go to dashboard
       if (view === ViewState.SCANNER) setView(ViewState.DASHBOARD);
     } else {
+      logEvent('collection', 'Add skipped — already in collection', { artist: record.artist, title: record.title });
       showNotification(`"${record.title}" is already in your collection`);
     }
   };
 
   const handleRemoveFromCollection = async (id: string) => {
     await removeRecord(id);
+    logEvent('collection', 'Removed from collection', { recordId: id });
     setCollection(await getCollection());
     showNotification("Record removed");
   };
@@ -156,10 +161,41 @@ export default function App() {
     return () => window.removeEventListener('resize', updateLayout);
   }, []);
 
+  // Paste an image (e.g. a screenshot) from anywhere on the site to jump
+  // straight into the scan flow — the desktop-friendly alternative to using
+  // a webcam.
+  useEffect(() => {
+    if (!user) return;
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const imageItem = Array.from(items).find((item) => item.type.startsWith('image/'));
+      if (!imageItem) return;
+
+      const file = imageItem.getAsFile();
+      if (!file) return;
+
+      e.preventDefault();
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPendingScanImage(reader.result as string);
+        setView(ViewState.SCANNER);
+      };
+      reader.readAsDataURL(file);
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, [user]);
+
   const handleSearch = async (page = 1, queryOverride?: string) => {
     const queryToSearch = (queryOverride ?? searchQuery).trim();
     if (!queryToSearch) return;
     setIsSearching(true);
+    const startedAt = performance.now();
 
     try {
       const result = await searchVinylReleaseGroups(
@@ -168,6 +204,14 @@ export default function App() {
         SEARCH_PAGE_SIZE,
         selectedSearchFormats,
       );
+      logEvent('discover', 'Search results', {
+        query: queryToSearch,
+        page,
+        total: result.total,
+        returned: result.groups.length,
+        top: result.groups.slice(0, 3).map((g) => `${g.artist} - ${g.title}`),
+        ms: Math.round(performance.now() - startedAt),
+      });
       setSearchPage(result);
       setGroupReleases({});
       releasesRef.current = {};
@@ -723,6 +767,9 @@ export default function App() {
         {/* Dynamic View */}
         {view === ViewState.SCANNER ? (
           <Scanner
+            isMobileLayout={isMobileLayout}
+            initialImage={pendingScanImage}
+            onInitialImageConsumed={() => setPendingScanImage(null)}
             onCancel={() => setView(ViewState.DASHBOARD)}
             onScanComplete={async (record) => {
               setCollection(await getCollection());

@@ -1,6 +1,6 @@
 /**
- * Abstract interface for blob storage. Implementations can be swapped
- * transparently by setting the STORAGE_PROVIDER environment variable.
+ * Abstract interface for blob storage, kept as a seam so a future provider
+ * (e.g. Firebase Storage) can be swapped in without touching callers.
  */
 export interface BlobStorageProvider {
   /** Store a blob and return its publicly accessible URL. */

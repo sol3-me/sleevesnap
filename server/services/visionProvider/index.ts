@@ -1,4 +1,5 @@
 import { Jimp } from 'jimp';
+import { logEvent, logWarn } from '../../logger.js';
 
 export interface VisionScanResult {
   artist: string;
@@ -12,6 +13,7 @@ const MAX_WIDTH = 1024;
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const OPENAI_MODEL = 'gpt-5.4-nano';
 const REQUEST_TIMEOUT_MS = 10000;
+const SCOPE = 'vision';
 
 const PROMPT =
   'Identify the single vinyl record sleeve shown in this photo. Respond with the ' +
@@ -45,11 +47,18 @@ async function resizeForVision(imageBuffer: Buffer): Promise<Buffer> {
 }
 
 /** Parses a provider's raw JSON-string reply into a VisionScanResult, or null if malformed. */
-function parseResult(raw: string | undefined): VisionScanResult | null {
-  if (!raw) return null;
+function parseResult(raw: string | undefined, requestId: string, provider: string): VisionScanResult | null {
+  if (!raw) {
+    logWarn(SCOPE, requestId, `${provider} returned an empty response body`);
+    return null;
+  }
+
   try {
     const parsed = JSON.parse(raw) as Partial<VisionScanResult>;
     if (typeof parsed.artist !== 'string' || typeof parsed.title !== 'string') {
+      logWarn(SCOPE, requestId, `${provider} response was missing required fields`, {
+        raw: raw.slice(0, 300),
+      });
       return null;
     }
     return {
@@ -60,11 +69,12 @@ function parseResult(raw: string | undefined): VisionScanResult | null {
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0,
     };
   } catch {
+    logWarn(SCOPE, requestId, `${provider} response was not valid JSON`, { raw: raw.slice(0, 300) });
     return null;
   }
 }
 
-async function identifyWithGemini(imageBuffer: Buffer): Promise<VisionScanResult[]> {
+async function identifyWithGemini(imageBuffer: Buffer, requestId: string): Promise<VisionScanResult[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return [];
 
@@ -99,11 +109,11 @@ async function identifyWithGemini(imageBuffer: Buffer): Promise<VisionScanResult
   const data = (await res.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
-  const result = parseResult(data.candidates?.[0]?.content?.parts?.[0]?.text);
+  const result = parseResult(data.candidates?.[0]?.content?.parts?.[0]?.text, requestId, 'Gemini');
   return result ? [result] : [];
 }
 
-async function identifyWithOpenAI(imageBuffer: Buffer): Promise<VisionScanResult[]> {
+async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promise<VisionScanResult[]> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return [];
 
@@ -145,7 +155,7 @@ async function identifyWithOpenAI(imageBuffer: Buffer): Promise<VisionScanResult
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
-  const result = parseResult(data.choices?.[0]?.message?.content);
+  const result = parseResult(data.choices?.[0]?.message?.content, requestId, 'OpenAI');
   return result ? [result] : [];
 }
 
@@ -155,6 +165,9 @@ async function identifyWithOpenAI(imageBuffer: Buffer): Promise<VisionScanResult
  * throws — returns [] when both providers fail or neither API key is
  * configured, so callers can treat this as a plain "no suggestion" signal.
  *
+ * `requestId` ties every log line here back to the originating /api/scan
+ * request — pass the same id you're already logging with in the caller.
+ *
  * NOTE: Gemini's exact request/response envelope below is based on the
  * long-documented `generateContent` REST shape (contents/parts/inlineData,
  * generationConfig.responseSchema). This could not be reliably re-confirmed
@@ -162,28 +175,53 @@ async function identifyWithOpenAI(imageBuffer: Buffer): Promise<VisionScanResult
  * https://ai.google.dev/gemini-api/docs/image-understanding if calls start
  * failing unexpectedly.
  */
-export async function identifyVinyl(imageBuffer: Buffer): Promise<VisionScanResult[]> {
+export async function identifyVinyl(imageBuffer: Buffer, requestId = 'unknown'): Promise<VisionScanResult[]> {
   let resized: Buffer;
   try {
     resized = await resizeForVision(imageBuffer);
+    logEvent(SCOPE, requestId, 'Image resized for vision providers', {
+      originalBytes: imageBuffer.length,
+      resizedBytes: resized.length,
+    });
   } catch (err) {
-    console.warn('[vision] Failed to resize image for vision providers:', err);
+    logWarn(SCOPE, requestId, 'Failed to resize image for vision providers', { error: String(err) });
     return [];
   }
 
-  try {
-    const geminiResults = await identifyWithGemini(resized);
-    if (geminiResults.length > 0) return geminiResults;
-  } catch (err) {
-    console.warn('[vision] Gemini identification failed:', err);
+  if (process.env.GEMINI_API_KEY) {
+    const startedAt = Date.now();
+    try {
+      const geminiResults = await identifyWithGemini(resized, requestId);
+      logEvent(SCOPE, requestId, 'Gemini call complete', {
+        ms: Date.now() - startedAt,
+        resultCount: geminiResults.length,
+        top: geminiResults[0],
+      });
+      if (geminiResults.length > 0) return geminiResults;
+    } catch (err) {
+      logWarn(SCOPE, requestId, 'Gemini call failed', { ms: Date.now() - startedAt, error: String(err) });
+    }
+  } else {
+    logEvent(SCOPE, requestId, 'Gemini skipped — GEMINI_API_KEY not configured');
   }
 
-  try {
-    const openaiResults = await identifyWithOpenAI(resized);
-    if (openaiResults.length > 0) return openaiResults;
-  } catch (err) {
-    console.warn('[vision] OpenAI identification failed:', err);
+  if (process.env.OPENAI_API_KEY) {
+    const startedAt = Date.now();
+    try {
+      const openaiResults = await identifyWithOpenAI(resized, requestId);
+      logEvent(SCOPE, requestId, 'OpenAI call complete', {
+        ms: Date.now() - startedAt,
+        resultCount: openaiResults.length,
+        top: openaiResults[0],
+      });
+      if (openaiResults.length > 0) return openaiResults;
+    } catch (err) {
+      logWarn(SCOPE, requestId, 'OpenAI call failed', { ms: Date.now() - startedAt, error: String(err) });
+    }
+  } else {
+    logEvent(SCOPE, requestId, 'OpenAI skipped — OPENAI_API_KEY not configured');
   }
 
+  logEvent(SCOPE, requestId, 'No provider produced a usable result');
   return [];
 }

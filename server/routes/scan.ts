@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db, incrementVisionCallCount } from '../db.js';
 import { computeHash, hammingDistance } from '../imageHash.js';
+import { logEvent, logWarn, newRequestId } from '../logger.js';
 import { identifyVinyl } from '../services/visionProvider/index.js';
 import { searchReleasesByText } from './search.js';
 
@@ -68,9 +69,12 @@ function rowToRecord(row: CollectionRow) {
  *                                               the user to search manually
  */
 scanRouter.post('/', async (req, res) => {
+  const requestId = newRequestId();
+  const startedAt = Date.now();
   const { base64Image } = req.body;
 
   if (!base64Image || typeof base64Image !== 'string') {
+    logEvent('scan', requestId, 'Rejected: base64Image missing or not a string');
     res.status(400).json({ error: 'base64Image is required' });
     return;
   }
@@ -79,15 +83,21 @@ scanRouter.post('/', async (req, res) => {
   try {
     imageBuffer = Buffer.from(base64Image, 'base64');
   } catch {
+    logEvent('scan', requestId, 'Rejected: invalid base64 image data');
     res.status(400).json({ error: 'Invalid base64 image data' });
     return;
   }
+
+  logEvent('scan', requestId, 'Image received', {
+    bytes: imageBuffer.length,
+    approxKB: Math.round(imageBuffer.length / 1024),
+  });
 
   let scanHash: string;
   try {
     scanHash = await computeHash(imageBuffer);
   } catch (err) {
-    console.error('[scan] Failed to hash image:', err);
+    logWarn('scan', requestId, 'Failed to hash image — upload rejected', { error: String(err) });
     res.status(400).json({ error: 'Could not process image' });
     return;
   }
@@ -111,11 +121,31 @@ scanRouter.post('/', async (req, res) => {
 
   const MATCH_THRESHOLD = 15; // bits; tuned for real-world photo variation
   if (bestMatch && bestDistance <= MATCH_THRESHOLD) {
+    logEvent('scan', requestId, 'Matched existing collection item', {
+      recordId: bestMatch.id,
+      artist: bestMatch.artist,
+      title: bestMatch.title,
+      distance: bestDistance,
+      scannedRows: rows.length,
+      totalMs: Date.now() - startedAt,
+    });
     res.json({ matched: true, record: rowToRecord(bestMatch) });
     return;
   }
 
-  const suggestions = await getVisionSuggestions(imageBuffer, req.header('x-vision-admin-key'));
+  logEvent('scan', requestId, 'No local collection match', {
+    scannedRows: rows.length,
+    bestDistance: Number.isFinite(bestDistance) ? bestDistance : null,
+    threshold: MATCH_THRESHOLD,
+  });
+
+  const suggestions = await getVisionSuggestions(imageBuffer, req.header('x-vision-admin-key'), requestId);
+
+  logEvent('scan', requestId, 'Request complete', {
+    matched: false,
+    suggestionCount: suggestions.length,
+    totalMs: Date.now() - startedAt,
+  });
   if (suggestions.length > 0) {
     res.json({ matched: false, suggestions });
   } else {
@@ -134,27 +164,62 @@ const VALIDATION_SEARCH_LIMIT = 5;
  * bypass. Never throws — any failure degrades to "no suggestions", which the
  * client already treats identically to today's plain no-match state.
  */
-async function getVisionSuggestions(imageBuffer: Buffer, adminHeaderValue: string | undefined) {
+async function getVisionSuggestions(
+  imageBuffer: Buffer,
+  adminHeaderValue: string | undefined,
+  requestId: string,
+) {
   const dateKey = new Date().toISOString().slice(0, 10);
   const adminKey = process.env.VISION_ADMIN_KEY;
   const isAdminBypass = Boolean(adminKey) && adminHeaderValue === adminKey;
 
   const count = incrementVisionCallCount(dateKey);
   const limit = Number(process.env.VISION_DAILY_LIMIT ?? DEFAULT_VISION_DAILY_LIMIT);
+
+  logEvent('scan', requestId, 'Vision daily cap check', { count, limit, dateKey, adminBypass: isAdminBypass });
+
   if (!isAdminBypass && count > limit) {
+    logEvent('scan', requestId, 'Vision call skipped — daily cap reached');
     return [];
   }
 
   try {
-    const [topGuess] = await identifyVinyl(imageBuffer);
-    if (!topGuess) return [];
+    const visionStartedAt = Date.now();
+    const guesses = await identifyVinyl(imageBuffer, requestId);
+    logEvent('scan', requestId, 'Vision guesses received', {
+      guessCount: guesses.length,
+      top: guesses[0],
+      ms: Date.now() - visionStartedAt,
+    });
+
+    const [topGuess] = guesses;
+    if (!topGuess) {
+      logEvent('scan', requestId, 'No vision suggestion available — client will fall back to manual search');
+      return [];
+    }
 
     const appName = process.env.MUSICBRAINZ_APP_NAME ?? 'sleevesnap';
-    return await searchReleasesByText(`${topGuess.artist} ${topGuess.title}`, appName, VALIDATION_SEARCH_LIMIT);
+    const validationQuery = `${topGuess.artist} ${topGuess.title}`;
+    const validated = await searchReleasesByText(validationQuery, appName, VALIDATION_SEARCH_LIMIT);
+
+    if (validated.length === 0) {
+      logEvent(
+        'scan',
+        requestId,
+        'Vision guess did NOT validate — MusicBrainz returned no vinyl-format match for this query',
+        { query: validationQuery, guess: topGuess },
+      );
+    } else {
+      logEvent('scan', requestId, 'Vision guess validated against MusicBrainz', {
+        query: validationQuery,
+        matchCount: validated.length,
+        top: `${validated[0]!.artist} - ${validated[0]!.title}`,
+      });
+    }
+
+    return validated;
   } catch (err) {
-    console.warn('[scan] Vision-assisted identification failed:', err);
+    logWarn('scan', requestId, 'Vision-assisted identification failed', { error: String(err) });
     return [];
   }
 }
-
-
