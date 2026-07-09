@@ -1,13 +1,40 @@
 @import "tailwindcss";
 
 @theme {
-  --color-vinyl-900: #121212;
-  --color-vinyl-800: #1e1e1e;
-  --color-vinyl-700: #2d2d2d;
+  /* Layered dark surfaces: 950 is the page base, 900/800 are cards and
+     panels, 700/600 are elevated/interactive surfaces. Borders in the app
+     lean on white/alpha (border-white/5 etc.) rather than these, so the
+     layers read as depth instead of outlines. */
+  --color-vinyl-950: #0b0b0d;
+  --color-vinyl-900: #111114;
+  --color-vinyl-850: #17171b;
+  --color-vinyl-800: #1b1b20;
+  --color-vinyl-700: #26262d;
+  --color-vinyl-600: #33333c;
   --color-vinyl-accent: #ff6b6b;
-  --color-vinyl-muted: #888888;
+  --color-vinyl-accent-soft: #ff8585;
+  --color-vinyl-muted: #8b8b93;
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
   --animate-spin-slow: spin 3s linear infinite;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+/* Consistent, visible keyboard focus everywhere without affecting mouse users. */
+:focus-visible {
+  outline: 2px solid var(--color-vinyl-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* iOS home-indicator clearance for the fixed bottom nav (needs
+   viewport-fit=cover on the meta viewport tag to take effect). */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Custom scrollbar for webkit */
@@ -16,29 +43,14 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #121212;
+  background: var(--color-vinyl-950);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: #2e2e35;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #444;
-}
-
-@keyframes search-progress {
-  0% {
-    transform: translateX(-100%);
-  }
-
-  100% {
-    transform: translateX(300%);
-  }
-}
-
-.search-progress-bar {
-  width: 35%;
-  animation: search-progress 1.2s linear infinite;
+  background: #3c3c44;
 }

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { VinylRecord } from '../types';
+import { Icons } from './Icons';
 
 interface VinylCardProps {
   record: VinylRecord;
@@ -36,24 +37,19 @@ export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove }) => {
   const musicBrainzReleaseUrl =
     record.releaseUrl ??
     (record.musicBrainzId ? `https://musicbrainz.org/release/${record.musicBrainzId}` : undefined);
-  const musicBrainzGroupUrl =
-    record.releaseGroupUrl ??
-    (record.releaseGroupId ? `https://musicbrainz.org/release-group/${record.releaseGroupId}` : undefined);
 
   const discogsSearchUrl = `https://www.discogs.com/search/?q=${encodeURIComponent(
     `${record.artist} ${record.title}`,
   )}&type=all`;
 
-  const metadata = [
-    record.releaseDate ?? record.year,
-    record.country,
-    record.format,
-    record.releaseStatus,
-    record.genre,
-  ].filter((value): value is string => Boolean(value));
+  // Keep the metadata line short and scannable: year + format carry the
+  // signal; country/status/genre live on the linked MusicBrainz page.
+  const metadata = [record.year ?? record.releaseDate?.slice(0, 4), record.format, record.country].filter(
+    (value): value is string => Boolean(value),
+  );
 
   return (
-    <div className="bg-vinyl-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-all border border-vinyl-700">
+    <div className="group bg-vinyl-800 rounded-2xl overflow-hidden border border-white/5 hover:border-white/15 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/40">
       <div className="relative aspect-square bg-vinyl-900">
         {activeCover ? (
           <img
@@ -70,75 +66,60 @@ export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove }) => {
             }}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
-            No cover art
+          <div className="w-full h-full flex items-center justify-center text-gray-600">
+            <Icons.Disc />
           </div>
         )}
-        {/* Vinyl Shine Effect */}
-        <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent pointer-events-none"></div>
+        {/* Subtle sheen so flat artwork doesn't look pasted on */}
+        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-transparent to-white/[0.04] pointer-events-none"></div>
 
-        {/* Record Groove Texture Overlay (Subtle) */}
-        <div className="absolute inset-0 rounded-full border-2 border-white/5 m-2 pointer-events-none opacity-50"></div>
+        {onRemove && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(record.id);
+            }}
+            className="absolute top-2 right-2 flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-full bg-black/50 backdrop-blur-sm text-gray-300 hover:bg-red-500/90 hover:text-white transition-colors md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+            aria-label="Remove record"
+          >
+            <Icons.Trash />
+          </button>
+        )}
       </div>
 
-      <div className="p-4">
-        <h3 className="font-bold text-lg text-white truncate" title={record.title}>{record.title}</h3>
-        <p className="text-vinyl-accent font-medium truncate">{record.artist}</p>
+      <div className="p-3.5">
+        <h3 className="font-semibold text-sm text-white truncate" title={record.title}>{record.title}</h3>
+        <p className="text-xs text-gray-400 truncate mt-0.5" title={record.artist}>{record.artist}</p>
 
-        <p className="mt-2 text-xs text-vinyl-muted">
-          {metadata.join(' • ') || 'Metadata unavailable'}
-        </p>
+        {metadata.length > 0 && (
+          <p className="mt-1.5 text-[11px] text-gray-500 truncate">{metadata.join(' · ')}</p>
+        )}
 
         {record.edition && (
-          <p className="mt-1 text-xs text-gray-400 truncate" title={record.edition}>
+          <p className="mt-0.5 text-[11px] text-gray-500 truncate italic" title={record.edition}>
             {record.edition}
           </p>
         )}
 
-        <div className="mt-3 flex items-end justify-between gap-2">
-          <div className="flex flex-wrap gap-2 text-xs">
-            {musicBrainzReleaseUrl && (
-              <a
-                href={musicBrainzReleaseUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="px-2 py-1 rounded bg-vinyl-700 text-gray-200 hover:text-white hover:bg-vinyl-600"
-              >
-                MusicBrainz Release
-              </a>
-            )}
-            {musicBrainzGroupUrl && (
-              <a
-                href={musicBrainzGroupUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="px-2 py-1 rounded bg-vinyl-700 text-gray-200 hover:text-white hover:bg-vinyl-600"
-              >
-                Release Group
-              </a>
-            )}
+        <div className="mt-2.5 flex items-center gap-3 text-[11px]">
+          {musicBrainzReleaseUrl && (
             <a
-              href={record.discogsUrl ?? discogsSearchUrl}
+              href={musicBrainzReleaseUrl}
               target="_blank"
               rel="noreferrer"
-              className="px-2 py-1 rounded bg-vinyl-700 text-gray-200 hover:text-white hover:bg-vinyl-600"
+              className="inline-flex items-center gap-1 text-gray-500 hover:text-vinyl-accent transition-colors"
             >
-              {record.discogsUrl ? 'Discogs' : 'Discogs Search'}
+              MusicBrainz <Icons.ExternalLink />
             </a>
-          </div>
-
-          {onRemove && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(record.id);
-              }}
-              className="shrink-0 px-2 py-1 text-xs rounded bg-red-900/70 text-red-200 border border-red-700 hover:bg-red-700 hover:text-white"
-              aria-label="Remove record"
-            >
-              Remove
-            </button>
           )}
+          <a
+            href={record.discogsUrl ?? discogsSearchUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-gray-500 hover:text-vinyl-accent transition-colors"
+          >
+            Discogs <Icons.ExternalLink />
+          </a>
         </div>
       </div>
     </div>

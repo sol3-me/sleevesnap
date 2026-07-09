@@ -293,11 +293,14 @@ export const Scanner: React.FC<ScannerProps> = ({
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full bg-black text-white p-4">
+    <div className="flex flex-col h-full bg-vinyl-950 text-white p-4 md:p-8">
       {/* Header */}
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-bold text-vinyl-accent">Scan Vinyl</h2>
-        <button onClick={onCancel} className="text-gray-400 hover:text-white">
+      <div className="flex justify-between items-center mb-4 md:mb-6">
+        <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Scan</h2>
+        <button
+          onClick={onCancel}
+          className="px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-sm font-medium text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+        >
           Close
         </button>
       </div>
@@ -305,15 +308,15 @@ export const Scanner: React.FC<ScannerProps> = ({
       {/* ── Chooser (capture stage, camera not yet open, nothing captured) ── */}
       {stage === 'capture' && !isStreaming && !capturedImage && (
         <div
-          className={`flex-1 flex flex-col items-center justify-center gap-6 p-6 rounded-lg border-2 border-dashed transition-colors ${
-            isDraggingOver ? 'border-vinyl-accent bg-vinyl-accent/10' : 'border-vinyl-700 bg-gray-900'
+          className={`flex-1 flex flex-col items-center justify-center gap-6 p-6 rounded-3xl border-2 border-dashed transition-colors ${
+            isDraggingOver ? 'border-vinyl-accent bg-vinyl-accent/10' : 'border-white/10 bg-vinyl-900/60'
           }`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
           {error && (
-            <div className="bg-red-900/80 text-white p-3 rounded text-center text-sm w-full max-w-xs">
+            <div className="bg-red-500/10 border border-red-500/25 text-red-300 p-3 rounded-xl text-center text-sm w-full max-w-xs">
               {error}
             </div>
           )}
@@ -323,14 +326,14 @@ export const Scanner: React.FC<ScannerProps> = ({
               <>
                 <button
                   onClick={handleOpenCamera}
-                  className="flex flex-col items-center justify-center gap-2 w-full py-6 rounded-xl bg-vinyl-accent hover:bg-red-500 text-white font-bold shadow-lg transition-all active:scale-95"
+                  className="flex flex-col items-center justify-center gap-2 w-full py-6 rounded-2xl bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white font-semibold shadow-lg shadow-vinyl-accent/25 transition-all active:scale-95"
                 >
                   <CameraIcon />
                   Take Photo
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center justify-center gap-2 w-full py-3 rounded-lg border border-vinyl-700 text-gray-300 hover:bg-white/5 transition-colors text-sm"
+                  className="flex items-center justify-center gap-2 w-full py-3 rounded-full border border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 transition-colors text-sm font-medium"
                 >
                   <UploadIcon />
                   Upload Image
@@ -340,14 +343,14 @@ export const Scanner: React.FC<ScannerProps> = ({
               <>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex flex-col items-center justify-center gap-2 w-full py-10 rounded-xl bg-vinyl-accent hover:bg-red-500 text-white font-bold shadow-lg transition-all active:scale-95"
+                  className="flex flex-col items-center justify-center gap-2 w-full py-10 rounded-2xl bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white font-semibold shadow-lg shadow-vinyl-accent/25 transition-all active:scale-95"
                 >
                   <UploadIcon />
                   Upload Image
                 </button>
                 <button
                   onClick={handleOpenCamera}
-                  className="flex items-center justify-center gap-2 w-full py-3 rounded-lg border border-vinyl-700 text-gray-300 hover:bg-white/5 transition-colors text-sm"
+                  className="flex items-center justify-center gap-2 w-full py-3 rounded-full border border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 transition-colors text-sm font-medium"
                 >
                   <CameraIcon />
                   Use Webcam
@@ -374,7 +377,7 @@ export const Scanner: React.FC<ScannerProps> = ({
 
       {/* ── Live camera feed (camera stage, streaming) ── */}
       {stage === 'capture' && isStreaming && (
-        <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden rounded-lg bg-gray-900 border border-vinyl-700">
+        <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden rounded-3xl bg-vinyl-900 border border-white/10">
           <video
             ref={videoRef}
             autoPlay
@@ -409,7 +412,7 @@ export const Scanner: React.FC<ScannerProps> = ({
 
       {/* ── Analysing (captured still + spinner overlay) ── */}
       {stage === 'analyzing' && capturedImage && (
-        <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden rounded-lg bg-gray-900 border border-vinyl-700">
+        <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden rounded-3xl bg-vinyl-900 border border-white/10">
           <img
             src={`data:image/jpeg;base64,${capturedImage}`}
             alt="Captured"
@@ -427,7 +430,7 @@ export const Scanner: React.FC<ScannerProps> = ({
       {/* ── Match found ── */}
       {stage === 'match_found' && matchedRecord && (
         <div className="flex-1 flex flex-col gap-4">
-          <div className="bg-green-900/40 border border-green-700 rounded-lg p-4">
+          <div className="bg-green-500/10 border border-green-500/25 rounded-2xl p-4">
             <p className="text-green-400 font-semibold mb-1">Found in your collection!</p>
             <p className="text-white font-bold text-lg">{matchedRecord.title}</p>
             <p className="text-gray-400">{matchedRecord.artist}</p>
@@ -438,7 +441,7 @@ export const Scanner: React.FC<ScannerProps> = ({
             <img
               src={`data:image/jpeg;base64,${capturedImage}`}
               alt="Captured sleeve"
-              className="w-full max-h-48 object-contain rounded-lg bg-gray-900"
+              className="w-full max-h-48 object-contain rounded-xl bg-vinyl-900"
             />
           )}
 
@@ -446,16 +449,16 @@ export const Scanner: React.FC<ScannerProps> = ({
             <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>
           )}
 
-          <div className="flex gap-2 mt-auto">
+          <div className="flex gap-3 mt-auto">
             <button
               onClick={() => setStage('no_match')}
-              className="flex-1 py-3 rounded border border-gray-600 text-gray-300 hover:bg-white/5"
+              className="flex-1 py-3 rounded-full border border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 font-medium text-sm transition-colors"
             >
               Not quite — search
             </button>
             <button
               onClick={() => onAlreadyInCollection(matchedRecord)}
-              className="flex-1 py-3 rounded bg-vinyl-accent text-white font-bold hover:bg-red-500"
+              className="flex-1 py-3 rounded-full bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white font-semibold text-sm transition-colors"
             >
               That's it!
             </button>
@@ -471,7 +474,7 @@ export const Scanner: React.FC<ScannerProps> = ({
             <img
               src={`data:image/jpeg;base64,${capturedImage}`}
               alt="Captured sleeve"
-              className="w-full max-h-36 object-contain rounded-lg bg-gray-900"
+              className="w-full max-h-36 object-contain rounded-xl bg-vinyl-900"
             />
           )}
 
@@ -492,18 +495,18 @@ export const Scanner: React.FC<ScannerProps> = ({
           {/* Search box */}
           <div className="flex gap-2">
             <input
-              type="text"
+              type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               placeholder="Search artist or album title…"
-              className="flex-1 bg-vinyl-800 text-white border border-vinyl-700 rounded-lg p-3 focus:ring-1 focus:ring-vinyl-accent focus:outline-none text-sm"
+              className="flex-1 bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
               autoFocus
             />
             <button
               onClick={handleSearch}
               disabled={stage === 'searching' || !searchQuery.trim()}
-              className="bg-vinyl-700 hover:bg-vinyl-600 text-white px-4 rounded-lg font-medium disabled:opacity-50"
+              className="bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-4 rounded-xl font-semibold text-sm disabled:opacity-50 transition-colors"
             >
               {stage === 'searching' ? '…' : 'Search'}
             </button>
@@ -514,9 +517,9 @@ export const Scanner: React.FC<ScannerProps> = ({
             {searchResults.map((record) => (
               <div
                 key={record.id}
-                className="flex items-center gap-3 bg-vinyl-800 rounded-lg p-3 border border-vinyl-700"
+                className="flex items-center gap-3 bg-vinyl-900/70 rounded-xl p-3 border border-white/5"
               >
-                <div className="w-12 h-12 rounded flex-shrink-0 overflow-hidden bg-gray-700 border border-vinyl-700">
+                <div className="w-12 h-12 rounded-lg flex-shrink-0 overflow-hidden bg-vinyl-700 border border-white/10">
                   {record.coverUrl && !failedCovers[record.id] ? (
                     <img
                       src={record.coverUrl}
@@ -544,7 +547,7 @@ export const Scanner: React.FC<ScannerProps> = ({
                 <button
                   onClick={() => confirmSelection(record)}
                   disabled={stage === 'saving'}
-                  className="flex-shrink-0 text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-2 rounded transition-colors disabled:opacity-50"
+                  className="flex-shrink-0 text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-2 rounded-full transition-colors disabled:opacity-50"
                 >
                   {stage === 'saving' ? '…' : 'This is it'}
                 </button>

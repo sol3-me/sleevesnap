@@ -41,8 +41,7 @@ export const FilterDropdown: React.FC<FilterDropdownProps> = ({
   }, [isOpen]);
 
   const selectedCount = options.filter(isSelected).length;
-  const summary =
-    selectedCount < options.length ? `${label} (${selectedCount} of ${options.length})` : label;
+  const isNarrowed = selectedCount < options.length;
 
   return (
     <div ref={containerRef} className="relative">
@@ -51,27 +50,36 @@ export const FilterDropdown: React.FC<FilterDropdownProps> = ({
         aria-haspopup="menu"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((prev) => !prev)}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-vinyl-800 border-vinyl-700 text-sm text-gray-200 hover:bg-vinyl-700/50 transition-colors ${accentClassName ?? ''}`}
+        className={`flex items-center gap-1.5 pl-3.5 pr-3 py-1.5 rounded-full border text-[13px] font-medium transition-colors ${
+          isNarrowed
+            ? 'bg-vinyl-accent/10 border-vinyl-accent/30 text-vinyl-accent'
+            : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10'
+        } ${accentClassName ?? ''}`}
       >
-        {summary}
-        <span className={`text-xs leading-none transition-transform ${isOpen ? 'rotate-180' : ''}`}>⌄</span>
+        {label}
+        {isNarrowed && (
+          <span className="min-w-4.5 px-1 py-px rounded-full bg-vinyl-accent text-white text-[10px] font-bold text-center leading-4">
+            {selectedCount}
+          </span>
+        )}
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}><polyline points="6 9 12 15 18 9"></polyline></svg>
       </button>
 
       {isOpen && (
         <div
           role="menu"
-          className="absolute z-10 mt-2 min-w-[180px] rounded-lg border border-vinyl-700 bg-vinyl-800 shadow-xl p-2 space-y-1"
+          className="absolute z-10 mt-2 min-w-44 rounded-xl border border-white/10 bg-vinyl-800 shadow-2xl shadow-black/50 p-1.5 space-y-0.5"
         >
           {options.map((option) => (
             <label
               key={option}
-              className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-vinyl-700/50 cursor-pointer select-none text-sm text-gray-200"
+              className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/5 cursor-pointer select-none text-sm text-gray-200"
             >
               <input
                 type="checkbox"
                 checked={isSelected(option)}
                 onChange={(e) => onToggle(option, e.target.checked)}
-                className="accent-vinyl-accent"
+                className="accent-vinyl-accent w-4 h-4"
               />
               {option}
             </label>

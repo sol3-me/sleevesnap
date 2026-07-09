@@ -123,24 +123,26 @@ export function CollectionView() {
   };
 
   return (
-    <div className="p-4 md:p-8 pb-24">
-      {/* Desktop-only quick-add FAB — mobile already has the camera button in
-          the header row above plus the bottom nav's scan button. */}
+    <div className="p-4 md:p-8 pb-28 md:pb-24">
+      {/* Desktop-only quick-add FAB — mobile covers this with the bottom
+          nav's raised scan button. */}
       <Link
         to="/discover"
-        className="hidden md:flex fixed bottom-8 right-8 items-center gap-2 bg-vinyl-accent hover:bg-red-500 text-white px-5 py-3 rounded-full shadow-lg transition-colors z-30"
+        className="hidden md:flex fixed bottom-8 right-8 items-center gap-2 bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white pl-4 pr-5 py-3 rounded-full font-semibold text-sm shadow-lg shadow-vinyl-accent/25 transition-all hover:-translate-y-0.5 z-30"
       >
-        <Icons.Search />
-        <span className="font-medium">Add Record</span>
+        <Icons.Plus />
+        Add Record
       </Link>
 
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <h2 className="text-3xl font-bold text-white">Your Collection</h2>
-          <p className="text-gray-400">{collection.length} Records</p>
+      <div className="flex justify-between items-center mb-6 md:mb-8">
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Collection</h2>
+          <span className="px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-xs font-medium text-gray-400">
+            {collection.length} {collection.length === 1 ? 'record' : 'records'}
+          </span>
         </div>
-        <div className="hidden md:flex items-center gap-3 px-3 py-2 rounded-lg border border-vinyl-700 bg-vinyl-800/70">
-          <span className="text-xs uppercase tracking-wide text-gray-400">Size</span>
+        <div className="hidden md:flex items-center gap-3 px-3.5 py-2 rounded-full border border-white/10 bg-white/5">
+          <span className="text-[11px] uppercase tracking-wider text-gray-500">Size</span>
           <input
             type="range"
             min={COLLECTION_CARD_SIZE_MIN}
@@ -151,20 +153,36 @@ export function CollectionView() {
             className="w-28 accent-vinyl-accent"
             aria-label="Collection card size"
           />
-          <span className="text-xs text-gray-500 w-10 text-right">{collectionCardSize}</span>
         </div>
       </div>
 
       {collection.length === 0 ? (
-        <div className="text-center py-20 bg-vinyl-800/50 rounded-xl border border-dashed border-vinyl-700">
-          <p className="text-xl text-gray-400 mb-4">It's quiet in here...</p>
-          <Link to="/discover" className="text-vinyl-accent underline hover:text-white">
-            Add your first record
-          </Link>
+        <div className="flex flex-col items-center text-center py-20 px-6 bg-vinyl-900/60 rounded-3xl border border-dashed border-white/10">
+          <div className="text-gray-600 mb-4 animate-spin-slow">
+            <Icons.Disc />
+          </div>
+          <p className="text-lg font-semibold text-white mb-1">No records yet</p>
+          <p className="text-sm text-gray-500 mb-6 max-w-60">
+            Scan a sleeve with your camera or search the catalog to start your collection.
+          </p>
+          <div className="flex flex-wrap justify-center gap-3">
+            <Link
+              to="/discover"
+              className="inline-flex items-center gap-2 bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-5 py-2.5 rounded-full font-semibold text-sm transition-colors"
+            >
+              <Icons.Plus /> Search the catalog
+            </Link>
+            <Link
+              to="/scan"
+              className="inline-flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-200 px-5 py-2.5 rounded-full font-semibold text-sm transition-colors"
+            >
+              Scan a sleeve
+            </Link>
+          </div>
         </div>
       ) : (
         <div
-          className="grid gap-4 md:gap-6"
+          className="grid gap-3 md:gap-5"
           style={
             isMobileLayout
               ? { gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }
@@ -180,7 +198,7 @@ export function CollectionView() {
               ref={record.id === highlight ? highlightedCardRef : undefined}
               className={
                 record.id === highlight
-                  ? 'rounded-lg ring-4 ring-vinyl-accent ring-offset-2 ring-offset-vinyl-900 transition-shadow'
+                  ? 'rounded-2xl ring-2 ring-vinyl-accent ring-offset-4 ring-offset-vinyl-950 transition-shadow'
                   : undefined
               }
             >

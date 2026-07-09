@@ -2,6 +2,7 @@ import { getRouteApi } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { FilterDropdown } from '../components/FilterDropdown';
+import { Icons } from '../components/Icons';
 import { useAddToCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
 import {
   bucketForFormat,
@@ -361,24 +362,29 @@ export function DiscoverView() {
   };
 
   return (
-    <div className="p-4 md:p-8 pb-24">
-      <h2 className="text-3xl font-bold text-white mb-6">Discover Vinyl</h2>
-      <div className="flex flex-col gap-3 mb-4">
+    <div className="p-4 md:p-8 pb-28 md:pb-24">
+      <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-5 md:mb-6">Discover</h2>
+      <div className="flex flex-col gap-3 mb-5">
         <div className="flex gap-2">
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-            placeholder="Search artist or album..."
-            className="flex-1 bg-vinyl-800 text-white border border-vinyl-700 rounded-lg p-3 focus:ring-1 focus:ring-vinyl-accent focus:outline-none"
-          />
+          <div className="relative flex-1">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none [&>svg]:w-4.5 [&>svg]:h-4.5">
+              <Icons.Search />
+            </span>
+            <input
+              type="search"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+              placeholder="Search artist or album..."
+              className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
+            />
+          </div>
           <button
             onClick={submitSearch}
             disabled={isSearching}
-            className="bg-vinyl-700 hover:bg-vinyl-600 text-white px-6 rounded-lg transition-colors font-medium disabled:opacity-50"
+            className="bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-5 md:px-6 rounded-xl transition-colors font-semibold text-sm disabled:opacity-50"
           >
-            {isSearching ? '...' : 'Search'}
+            Search
           </button>
         </div>
         {(sortedFormatBuckets.length > 0 || sortedTypeBuckets.length > 0) && (
@@ -401,7 +407,6 @@ export function DiscoverView() {
                 onToggle={(bucket, checked) =>
                   setTypeFilters((prev) => ({ ...prev, [bucket]: checked }))
                 }
-                accentClassName="border-l-2 border-l-blue-500/60"
               />
             )}
           </div>
@@ -409,27 +414,30 @@ export function DiscoverView() {
       </div>
 
       {isSearching && (
-        <div className="mb-4 bg-vinyl-800 border border-vinyl-700 rounded-lg p-3">
-          <div className="flex items-center gap-3 text-sm text-gray-200">
-            <div className="w-4 h-4 border-2 border-vinyl-accent border-t-transparent rounded-full animate-spin" />
-            Searching MusicBrainz release groups...
-          </div>
-          <div className="mt-3 h-1.5 bg-vinyl-700 rounded overflow-hidden">
-            <div className="search-progress-bar h-full bg-vinyl-accent" />
-          </div>
+        <div className="space-y-3" aria-label="Loading search results" role="status">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="bg-vinyl-800/60 rounded-2xl border border-white/5 p-4 flex gap-4 animate-pulse">
+              <div className="w-20 h-20 rounded-xl bg-white/5 shrink-0" />
+              <div className="flex-1 min-w-0 py-1 space-y-2.5">
+                <div className="h-4 bg-white/10 rounded-md w-1/2" />
+                <div className="h-3 bg-white/5 rounded-md w-1/3" />
+                <div className="h-3 bg-white/5 rounded-md w-2/3" />
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {searchPage.total > 0 && (
-        <div className="mb-4 text-sm text-gray-400 flex flex-wrap gap-4">
+      {!isSearching && searchPage.total > 0 && (
+        <div className="mb-4 text-xs text-gray-500 flex flex-wrap gap-x-4 gap-y-1">
           <span>{`${searchPage.total.toLocaleString()} matching release groups`}</span>
           <span>{`Page ${searchPage.page} of ${totalPages}`}</span>
           <span>{`${filteredGroups.length} of ${searchPage.groups.length} shown on this page`}</span>
         </div>
       )}
 
-      <div className="space-y-4">
-        {filteredGroups.map((group) => {
+      <div className="space-y-3">
+        {!isSearching && filteredGroups.map((group) => {
           const details = groupReleases[group.releaseGroupId];
           const filteredReleases = getFilteredReleases(group);
           const groupedReleases = groupReleasesByFormatBucket<SearchRelease>(filteredReleases);
@@ -444,7 +452,7 @@ export function DiscoverView() {
           const groupOwned = isGroupOwned(group.releaseGroupId);
 
           return (
-            <div key={group.releaseGroupId} className="bg-vinyl-800 rounded-xl border border-vinyl-700 overflow-hidden">
+            <div key={group.releaseGroupId} className="bg-vinyl-800/60 rounded-2xl border border-white/5 hover:border-white/10 transition-colors overflow-hidden">
               {/* Not a <button> — it contains the MusicBrainz/Discogs links
                   below, and interactive elements can't nest inside a button
                   (invalid HTML, breaks screen readers). Clicking this area
@@ -452,59 +460,60 @@ export function DiscoverView() {
                   control below is the real, keyboard-accessible button. */}
               <div
                 onClick={() => toggleGroupExpanded(group)}
-                className="w-full text-left p-4 flex flex-col sm:flex-row gap-4 hover:bg-vinyl-700/30 transition-colors cursor-pointer"
+                className="w-full text-left p-4 flex flex-col sm:flex-row gap-4 cursor-pointer"
               >
                 <div className="flex gap-4 flex-1 min-w-0">
-                  <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0 bg-vinyl-900">
-                    {renderCoverThumb(`group-${group.releaseGroupId}`, group.title, group.thumbnailUrl, 'No group art')}
+                  <div className="w-20 h-20 rounded-xl overflow-hidden border border-white/10 shrink-0 bg-vinyl-900">
+                    {renderCoverThumb(`group-${group.releaseGroupId}`, group.title, group.thumbnailUrl, 'No art')}
                   </div>
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-bold text-white truncate min-w-0">{group.title}</h3>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <h3 className="text-base font-semibold text-white truncate min-w-0">{group.title}</h3>
+                      <div className="flex items-center gap-1.5 shrink-0">
                         {group.primaryType && (
-                          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-vinyl-700 text-gray-300">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-400">
                             {group.primaryType}
                           </span>
                         )}
                         {groupOwned && (
                           <span
-                            className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-700 text-green-100"
+                            className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-green-500/15 border border-green-500/20 text-green-400"
                             title="You already own at least one pressing of this release"
                           >
-                            In Collection
+                            Owned
                           </span>
                         )}
                       </div>
                     </div>
-                    <p className="text-sm text-gray-400 truncate">{group.artist}</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {[group.firstReleaseDate?.slice(0, 4), `${releaseCount} release${releaseCount === 1 ? '' : 's'}`]
+                    <p className="text-sm text-gray-400 truncate mt-0.5">{group.artist}</p>
+                    <p className="text-xs text-gray-500 mt-1.5 truncate">
+                      {[
+                        group.firstReleaseDate?.slice(0, 4),
+                        `${releaseCount} release${releaseCount === 1 ? '' : 's'}`,
+                        group.availableFormats.length > 0 ? group.availableFormats.join(', ') : undefined,
+                      ]
                         .filter(Boolean)
-                        .join(' • ')}
+                        .join(' · ')}
                     </p>
-                    <p className="text-xs text-gray-500 mt-1 truncate">
-                      {`Formats: ${group.availableFormats.length > 0 ? group.availableFormats.join(', ') : 'Unknown'}`}
-                    </p>
-                    <div className="mt-1 flex flex-wrap items-center gap-3 text-xs">
+                    <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
                       <a
                         href={group.releaseGroupUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-vinyl-accent hover:text-white underline"
+                        className="inline-flex items-center gap-1 text-gray-500 hover:text-vinyl-accent transition-colors"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        MusicBrainz Group
+                        MusicBrainz <Icons.ExternalLink />
                       </a>
                       <a
                         href={discogsGroupUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-vinyl-accent hover:text-white underline"
+                        className="inline-flex items-center gap-1 text-gray-500 hover:text-vinyl-accent transition-colors"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {group.discogsMasterUrl || details?.discogsMasterUrl ? 'Discogs Master' : 'Discogs Search'}
+                        {group.discogsMasterUrl || details?.discogsMasterUrl ? 'Discogs Master' : 'Discogs Search'} <Icons.ExternalLink />
                       </a>
                     </div>
                   </div>
@@ -518,18 +527,21 @@ export function DiscoverView() {
                       e.stopPropagation();
                       void toggleGroupExpanded(group);
                     }}
-                    className="w-full sm:w-auto sm:min-w-[160px] px-4 py-2 rounded-lg border border-vinyl-600 bg-vinyl-900 text-sm text-gray-200 flex items-center justify-center gap-2 hover:bg-vinyl-700 transition-colors"
+                    className="w-full sm:w-auto sm:min-w-[150px] px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm font-medium text-gray-200 flex items-center justify-center gap-1.5 hover:bg-white/10 transition-colors"
                   >
                     <span>{canExpand ? (isExpanded ? 'Hide releases' : 'Show releases') : 'Single release'}</span>
-                    <span className={`text-base leading-none transition-transform ${isExpanded ? 'rotate-180' : ''}`}>⌄</span>
+                    <span className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}><Icons.ChevronDown /></span>
                   </button>
                 </div>
               </div>
 
               {isExpanded && (
-                <div className="px-4 pb-4 space-y-3 border-t border-vinyl-700/70">
+                <div className="px-4 pb-4 space-y-3 border-t border-white/5">
                   {(!details || loadingGroup) && (
-                    <div className="text-sm text-gray-400 py-3">Loading release variants...</div>
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-3">
+                      <span className="w-3.5 h-3.5 border-2 border-vinyl-accent border-t-transparent rounded-full animate-spin" />
+                      Loading release variants...
+                    </div>
                   )}
 
                   {details && filteredReleases.length === 0 && (
@@ -548,8 +560,8 @@ export function DiscoverView() {
                           const country = formatCountry(record.country);
                           const alreadyOwned = isReleaseOwned(record);
                           return (
-                            <div key={record.id} className="flex bg-vinyl-900 rounded-lg p-3 border border-vinyl-700 gap-3">
-                              <div className="w-20 h-20 rounded-md overflow-hidden border border-vinyl-700 shrink-0">
+                            <div key={record.id} className="flex bg-vinyl-900/70 rounded-xl p-3 border border-white/5 gap-3">
+                              <div className="w-20 h-20 rounded-lg overflow-hidden border border-white/10 shrink-0">
                                 {renderCoverThumb(record.id, record.title, [record.coverUrl, group.thumbnailUrl])}
                               </div>
                               <div className="min-w-0 flex-1 flex flex-col justify-between">
@@ -580,8 +592,8 @@ export function DiscoverView() {
                                   disabled={alreadyOwned}
                                   className={
                                     alreadyOwned
-                                      ? 'self-end text-xs bg-green-700 text-green-100 px-3 py-1 rounded cursor-default'
-                                      : 'self-end text-xs bg-vinyl-accent hover:bg-red-500 text-white px-3 py-1 rounded transition-colors'
+                                      ? 'self-end text-xs font-semibold bg-green-500/15 border border-green-500/20 text-green-400 px-3.5 py-1.5 rounded-full cursor-default'
+                                      : 'self-end text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-1.5 rounded-full transition-colors'
                                   }
                                 >
                                   {alreadyOwned ? 'In Collection' : 'Add to Collection'}
@@ -612,20 +624,20 @@ export function DiscoverView() {
         </div>
       )}
 
-      {(searchPage.hasMore || searchPage.page > 1) && (
-        <div className="mt-8 flex items-center justify-center gap-2">
+      {!isSearching && (searchPage.hasMore || searchPage.page > 1) && (
+        <div className="mt-8 flex items-center justify-center gap-3">
           <button
             disabled={searchPage.page <= 1 || isSearching}
             onClick={() => goToPage(searchPage.page - 1)}
-            className="px-4 py-2 rounded bg-vinyl-800 border border-vinyl-700 disabled:opacity-50"
+            className="px-4 py-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 text-sm font-medium text-gray-200 transition-colors disabled:opacity-40 disabled:hover:bg-white/5"
           >
-            Prev
+            Previous
           </button>
-          <span className="text-sm text-gray-400 px-2">{`Page ${searchPage.page} / ${totalPages}`}</span>
+          <span className="text-xs text-gray-500 tabular-nums px-1">{`${searchPage.page} / ${totalPages}`}</span>
           <button
             disabled={!searchPage.hasMore || isSearching}
             onClick={() => goToPage(searchPage.page + 1)}
-            className="px-4 py-2 rounded bg-vinyl-800 border border-vinyl-700 disabled:opacity-50"
+            className="px-4 py-2 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 text-sm font-medium text-gray-200 transition-colors disabled:opacity-40 disabled:hover:bg-white/5"
           >
             Next
           </button>
