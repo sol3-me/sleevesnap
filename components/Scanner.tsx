@@ -47,9 +47,11 @@ export const Scanner: React.FC<ScannerProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const [stage, setStage] = useState<Stage>('capture');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isVideoReady, setIsVideoReady] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);  // base64
   const [error, setError] = useState<string | null>(null);
@@ -66,13 +68,17 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   const startCamera = useCallback(async () => {
     setError(null);
+    // Reset readiness while acquiring/attaching a new stream.
+    setIsVideoReady(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment' },
       });
+      streamRef.current = stream;
+      setIsStreaming(true);
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        setIsStreaming(true);
       }
     } catch {
       setError('Unable to access camera. Please try uploading a file.');
@@ -80,13 +86,23 @@ export const Scanner: React.FC<ScannerProps> = ({
   }, []);
 
   const stopCamera = useCallback(() => {
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((t) => t.stop());
-      videoRef.current.srcObject = null;
-      setIsStreaming(false);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsStreaming(false);
+    setIsVideoReady(false);
   }, []);
+
+  // Attach an already-acquired stream once the video element mounts.
+  useEffect(() => {
+    if (isStreaming && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [isStreaming]);
 
   // Camera access is only requested when the user explicitly taps the
   // camera button (handleOpenCamera below) — never on mount. Requesting
@@ -106,6 +122,10 @@ export const Scanner: React.FC<ScannerProps> = ({
   const captureFromCamera = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
+    if (!isVideoReady || video.videoWidth === 0 || video.videoHeight === 0) {
+      setError('Camera is still warming up. Please try again.');
+      return;
+    }
     const canvas = canvasRef.current;
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -115,7 +135,7 @@ export const Scanner: React.FC<ScannerProps> = ({
     const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
     stopCamera();
     processImage(dataUrl, 'camera');
-  }, [stopCamera]);
+  }, [isVideoReady, stopCamera]);
 
   /** Shared by file-input selection and drag-and-drop. */
   const handleFile = useCallback((file: File, method: CaptureMethod) => {
@@ -383,6 +403,12 @@ export const Scanner: React.FC<ScannerProps> = ({
             autoPlay
             playsInline
             muted
+            onLoadedMetadata={() => {
+              void videoRef.current?.play().catch(() => {
+                // If autoplay is gated, keep UI usable and let user try capture again.
+              });
+              setIsVideoReady(true);
+            }}
             className="absolute inset-0 w-full h-full object-cover"
           />
 
@@ -398,6 +424,7 @@ export const Scanner: React.FC<ScannerProps> = ({
 
               <button
                 onClick={captureFromCamera}
+                disabled={!isVideoReady}
                 className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-vinyl-accent/20 hover:bg-vinyl-accent/40 transition-all active:scale-95"
                 aria-label="Capture"
               >
