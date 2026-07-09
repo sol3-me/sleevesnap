@@ -31,6 +31,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   delete process.env.GEMINI_API_KEY;
   delete process.env.OPENAI_API_KEY;
+  delete process.env.VISION_MAX_GUESSES;
 });
 
 test('returns Gemini result when Gemini call succeeds', async () => {
@@ -159,4 +160,42 @@ test('returns empty array and makes no network calls when no API keys are config
 
   assert.deepEqual(results, []);
   assert.equal(fetchCalled, false);
+});
+
+test('returns multiple guesses sorted by confidence and capped by VISION_MAX_GUESSES', async () => {
+  process.env.VISION_MAX_GUESSES = '3';
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = urlOf(input);
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return jsonResponse({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify([
+                    { artist: 'Queens of the Stone Age', title: 'Rated R', confidence: 1.0 },
+                    { artist: 'Queens of the Stone Age', title: 'Songs for the Deaf', confidence: 0.92 },
+                    { artist: 'Queens of the Stone Age', title: 'Lullabies to Paralyze', confidence: 0.61 },
+                    { artist: 'Kyuss', title: 'Welcome to Sky Valley', confidence: 0.37 },
+                  ]),
+                },
+              ],
+            },
+          },
+        ],
+      });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  }) as typeof fetch;
+
+  const results = await identifyVinyl(fixtureBuffer);
+
+  assert.equal(results.length, 3);
+  assert.equal(results[0]?.title, 'Rated R');
+  assert.equal(results[1]?.title, 'Songs for the Deaf');
+  assert.equal(results[2]?.title, 'Lullabies to Paralyze');
+  assert.ok((results[0]?.confidence ?? 0) >= (results[1]?.confidence ?? 0));
+  assert.ok((results[1]?.confidence ?? 0) >= (results[2]?.confidence ?? 0));
 });

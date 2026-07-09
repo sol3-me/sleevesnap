@@ -168,6 +168,7 @@ scanRouter.post('/', async (req, res) => {
 
 const DEFAULT_VISION_DAILY_LIMIT = 5;
 const VALIDATION_SEARCH_LIMIT = 5;
+const DEFAULT_VALIDATION_GUESSES = 3;
 
 /**
  * Runs the vision-assisted identification + MusicBrainz validation flow for
@@ -212,29 +213,60 @@ async function getVisionSuggestions(
     }
 
     const appName = process.env.MUSICBRAINZ_APP_NAME ?? 'sleevesnap';
-    const validationQuery = `${topGuess.artist} ${topGuess.title}`;
-    const validated = await searchReleasesByText(validationQuery, appName, VALIDATION_SEARCH_LIMIT);
+    const validationGuessLimit = Math.max(
+      1,
+      Number(process.env.VISION_VALIDATION_GUESSES ?? DEFAULT_VALIDATION_GUESSES),
+    );
+    const guessesToValidate = guesses.slice(0, validationGuessLimit);
 
-    if (validated.length === 0) {
-      logEvent(
-        'scan',
-        requestId,
-        'Vision guess did NOT validate — MusicBrainz returned no vinyl-format match for this query',
-        { query: validationQuery, guess: topGuess },
-      );
-    } else {
+    type ValidatedRecord = Awaited<ReturnType<typeof searchReleasesByText>>[number];
+    const rankedResults: Array<{ record: ValidatedRecord; confidence: number; query: string }> = [];
+    for (const guess of guessesToValidate) {
+      const validationQuery = `${guess.artist} ${guess.title}`;
+      const validated = await searchReleasesByText(validationQuery, appName, VALIDATION_SEARCH_LIMIT);
+
+      if (validated.length === 0) {
+        logEvent(
+          'scan',
+          requestId,
+          'Vision guess did NOT validate — MusicBrainz returned no vinyl-format match for this query',
+          { query: validationQuery, guess },
+        );
+        continue;
+      }
+
       logEvent('scan', requestId, 'Vision guess validated against MusicBrainz', {
         query: validationQuery,
         matchCount: validated.length,
         top: `${validated[0]!.artist} - ${validated[0]!.title}`,
+        confidence: guess.confidence,
       });
+
+      for (const record of validated) {
+        rankedResults.push({ record, confidence: guess.confidence, query: validationQuery });
+      }
     }
 
+    const deduped = new Map<string, { record: ValidatedRecord; confidence: number }>();
+    for (const item of rankedResults) {
+      const key = item.record.musicBrainzId
+        ? `mbid:${item.record.musicBrainzId}`
+        : `${item.record.artist.toLowerCase()}::${item.record.title.toLowerCase()}`;
+      const existing = deduped.get(key);
+      if (!existing || item.confidence > existing.confidence) {
+        deduped.set(key, { record: item.record, confidence: item.confidence });
+      }
+    }
+
+    const suggestions = Array.from(deduped.values())
+      .sort((a, b) => b.confidence - a.confidence)
+      .map((item) => item.record);
+
     return {
-      suggestions: validated,
+      suggestions,
       vision: {
         guesses,
-        suggestedQuery: validationQuery,
+        suggestedQuery: `${topGuess.artist} ${topGuess.title}`,
       },
     };
   } catch (err) {

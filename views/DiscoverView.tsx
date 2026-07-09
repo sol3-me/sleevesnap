@@ -3,12 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { FilterDropdown } from '../components/FilterDropdown';
 import { Icons } from '../components/Icons';
+import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { useAddToCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
 import {
   bucketForFormat,
   FilterState,
   formatBucketsForGroup,
-  groupReleasesByFormatBucket,
   loadStoredFilterState,
   sortFormatBuckets,
   sortTypeBuckets,
@@ -16,7 +16,7 @@ import {
 } from '../lib/filters';
 import { logEvent, logWarn } from '../services/telemetry';
 import { getReleaseGroupReleases, searchVinylReleaseGroups } from '../services/vinylService';
-import { SearchGroupReleases, SearchRelease, SearchResultGroup, SearchResultPage, VinylRecord } from '../types';
+import { SearchGroupReleases, SearchResultGroup, SearchResultPage, VinylRecord } from '../types';
 
 const routeApi = getRouteApi('/discover');
 
@@ -52,7 +52,6 @@ export function DiscoverView() {
   const [typeFilters, setTypeFilters] = useState<FilterState>(() => loadStoredFilterState(SEARCH_TYPE_FILTERS_KEY));
   const [discoveredFormatBuckets, setDiscoveredFormatBuckets] = useState<string[]>([]);
   const [discoveredTypeBuckets, setDiscoveredTypeBuckets] = useState<string[]>([]);
-  const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
   const [isSearching, setIsSearching] = useState(false);
   const releasesRef = useRef<Record<string, SearchGroupReleases>>({});
   const loadingRef = useRef<Set<string>>(new Set());
@@ -118,7 +117,6 @@ export function DiscoverView() {
       loadingRef.current.clear();
       setLoadingGroupIds({});
       setExpandedGroups({});
-      setFailedCovers({});
     } catch (err) {
       // Leave the previously-shown results in place rather than replacing
       // them with an empty page — a failed "next page" fetch shouldn't wipe
@@ -284,72 +282,6 @@ export function DiscoverView() {
     }
   };
 
-  const formatCountry = (countryCode?: string) => {
-    if (!countryCode) return undefined;
-    const specialRegions: Record<string, string> = {
-      XE: 'Europe',
-      XW: 'Worldwide',
-      XG: 'East Germany',
-    };
-
-    if (specialRegions[countryCode]) {
-      return `${specialRegions[countryCode]} (${countryCode})`;
-    }
-
-    try {
-      const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode);
-      if (name && name !== countryCode) {
-        return `${name} (${countryCode})`;
-      }
-    } catch {
-      // Ignore and fall through to the raw code.
-    }
-
-    return countryCode;
-  };
-
-  const getCoverFailureKey = (recordId: string, coverUrl: string) =>
-    `${recordId}::${coverUrl}`;
-
-  const handleCoverError = (recordId: string, coverUrl: string) => {
-    setFailedCovers((prev) => ({
-      ...prev,
-      [getCoverFailureKey(recordId, coverUrl)]: true,
-    }));
-  };
-
-  const renderCoverThumb = (
-    id: string,
-    title: string,
-    urlOrUrls?: string | Array<string | undefined>,
-    placeholderText = 'No cover',
-  ) => {
-    const candidateUrls = (Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls])
-      .map((url) => url?.trim())
-      .filter((url): url is string => Boolean(url))
-      .filter((url) => !failedCovers[getCoverFailureKey(id, url)]);
-
-    const activeUrl = candidateUrls[0];
-
-    if (activeUrl) {
-      return (
-        <img
-          src={activeUrl}
-          alt={title}
-          onError={() => handleCoverError(id, activeUrl)}
-          className="w-full h-full object-cover"
-        />
-      );
-    }
-
-    return (
-      <div className="w-full h-full bg-vinyl-700 text-gray-300 flex flex-col items-center justify-center text-[10px] leading-tight">
-        <span className="text-lg" aria-hidden="true">♪</span>
-        <span>{placeholderText}</span>
-      </div>
-    );
-  };
-
   const handleAddToCollection = async (record: VinylRecord) => {
     const success = await addMutation.mutateAsync(record);
     if (success) {
@@ -436,181 +368,30 @@ export function DiscoverView() {
         </div>
       )}
 
-      <div className="space-y-3">
-        {!isSearching && filteredGroups.map((group) => {
-          const details = groupReleases[group.releaseGroupId];
-          const filteredReleases = getFilteredReleases(group);
-          const groupedReleases = groupReleasesByFormatBucket<SearchRelease>(filteredReleases);
-          const isExpanded = Boolean(expandedGroups[group.releaseGroupId]);
-          const loadingGroup = Boolean(loadingGroupIds[group.releaseGroupId]);
-          const releaseCount = group.totalReleases;
-          const canExpand = releaseCount > 1;
-          const discogsSearchUrl = `https://www.discogs.com/search/?q=${encodeURIComponent(
-            `${group.artist} ${group.title}`,
-          )}&type=master`;
-          const discogsGroupUrl = group.discogsMasterUrl ?? details?.discogsMasterUrl ?? discogsSearchUrl;
-          const groupOwned = isGroupOwned(group.releaseGroupId);
-
-          return (
-            <div key={group.releaseGroupId} className="bg-vinyl-800/60 rounded-2xl border border-white/5 hover:border-white/10 transition-colors overflow-hidden">
-              {/* Not a <button> — it contains the MusicBrainz/Discogs links
-                  below, and interactive elements can't nest inside a button
-                  (invalid HTML, breaks screen readers). Clicking this area
-                  still toggles expansion for mouse users; the "Show releases"
-                  control below is the real, keyboard-accessible button. */}
-              <div
-                onClick={() => toggleGroupExpanded(group)}
-                className="w-full text-left p-4 flex flex-col sm:flex-row gap-4 cursor-pointer"
-              >
-                <div className="flex gap-4 flex-1 min-w-0">
-                  <div className="w-20 h-20 rounded-xl overflow-hidden border border-white/10 shrink-0 bg-vinyl-900">
-                    {renderCoverThumb(`group-${group.releaseGroupId}`, group.title, group.thumbnailUrl, 'No art')}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-base font-semibold text-white truncate min-w-0">{group.title}</h3>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {group.primaryType && (
-                          <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-gray-400">
-                            {group.primaryType}
-                          </span>
-                        )}
-                        {groupOwned && (
-                          <span
-                            className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-green-500/15 border border-green-500/20 text-green-400"
-                            title="You already own at least one pressing of this release"
-                          >
-                            Owned
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-sm text-gray-400 truncate mt-0.5">{group.artist}</p>
-                    <p className="text-xs text-gray-500 mt-1.5 truncate">
-                      {[
-                        group.firstReleaseDate?.slice(0, 4),
-                        `${releaseCount} release${releaseCount === 1 ? '' : 's'}`,
-                        group.availableFormats.length > 0 ? group.availableFormats.join(', ') : undefined,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px]">
-                      <a
-                        href={group.releaseGroupUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-gray-500 hover:text-vinyl-accent transition-colors"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        MusicBrainz <Icons.ExternalLink />
-                      </a>
-                      <a
-                        href={discogsGroupUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-gray-500 hover:text-vinyl-accent transition-colors"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {group.discogsMasterUrl || details?.discogsMasterUrl ? 'Discogs Master' : 'Discogs Search'} <Icons.ExternalLink />
-                      </a>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="sm:self-center shrink-0">
-                  <button
-                    type="button"
-                    aria-expanded={isExpanded}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void toggleGroupExpanded(group);
-                    }}
-                    className="w-full sm:w-auto sm:min-w-[150px] px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm font-medium text-gray-200 flex items-center justify-center gap-1.5 hover:bg-white/10 transition-colors"
-                  >
-                    <span>{canExpand ? (isExpanded ? 'Hide releases' : 'Show releases') : 'Single release'}</span>
-                    <span className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}><Icons.ChevronDown /></span>
-                  </button>
-                </div>
-              </div>
-
-              {isExpanded && (
-                <div className="px-4 pb-4 space-y-3 border-t border-white/5">
-                  {(!details || loadingGroup) && (
-                    <div className="flex items-center gap-2 text-sm text-gray-500 py-3">
-                      <span className="w-3.5 h-3.5 border-2 border-vinyl-accent border-t-transparent rounded-full animate-spin" />
-                      Loading release variants...
-                    </div>
-                  )}
-
-                  {details && filteredReleases.length === 0 && (
-                    <div className="text-sm text-gray-500 py-3">
-                      No releases in this group match the selected formats.
-                    </div>
-                  )}
-
-                  {groupedReleases.map(({ bucket, releases }) => (
-                    <div key={bucket}>
-                      <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2 mt-3 first:mt-0">
-                        {bucket}
-                      </h5>
-                      <div className="space-y-3">
-                        {releases.map((record) => {
-                          const country = formatCountry(record.country);
-                          const alreadyOwned = isReleaseOwned(record);
-                          return (
-                            <div key={record.id} className="flex bg-vinyl-900/70 rounded-xl p-3 border border-white/5 gap-3">
-                              <div className="w-20 h-20 rounded-lg overflow-hidden border border-white/10 shrink-0">
-                                {renderCoverThumb(record.id, record.title, [record.coverUrl, group.thumbnailUrl])}
-                              </div>
-                              <div className="min-w-0 flex-1 flex flex-col justify-between">
-                                <div>
-                                  <h4 className="font-bold text-white truncate">{record.title}</h4>
-                                  <p className="text-sm text-gray-400 truncate">{record.artist}</p>
-                                  <p className="text-xs text-gray-500 mt-1 truncate">
-                                    {[record.year, country, record.format, record.releaseStatus, record.genre]
-                                      .filter(Boolean)
-                                      .join(' • ') || 'Metadata unavailable'}
-                                  </p>
-                                  <p className="text-xs text-gray-500 truncate">
-                                    {record.edition ? `${record.edition} • ` : ''}
-                                    {record.musicBrainzId && (
-                                      <a
-                                        href={record.releaseUrl ?? `https://musicbrainz.org/release/${record.musicBrainzId}`}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-vinyl-accent hover:text-white underline"
-                                      >
-                                        MBID {record.musicBrainzId.slice(0, 8)}
-                                      </a>
-                                    )}
-                                  </p>
-                                </div>
-                                <button
-                                  onClick={() => !alreadyOwned && void handleAddToCollection(record)}
-                                  disabled={alreadyOwned}
-                                  className={
-                                    alreadyOwned
-                                      ? 'self-end text-xs font-semibold bg-green-500/15 border border-green-500/20 text-green-400 px-3.5 py-1.5 rounded-full cursor-default'
-                                      : 'self-end text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-1.5 rounded-full transition-colors'
-                                  }
-                                >
-                                  {alreadyOwned ? 'In Collection' : 'Add to Collection'}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {!isSearching && (
+        <ReleaseGroupResultsList
+          groups={filteredGroups}
+          groupReleases={groupReleases}
+          expandedGroups={expandedGroups}
+          loadingGroupIds={loadingGroupIds}
+          onToggleGroup={(group) => {
+            void toggleGroupExpanded(group);
+          }}
+          getVisibleReleases={getFilteredReleases}
+          showFormatBuckets
+          isGroupOwned={isGroupOwned}
+          isReleaseActionDisabled={isReleaseOwned}
+          getReleaseActionLabel={(_, disabled) => (disabled ? 'In Collection' : 'Add to Collection')}
+          getReleaseActionClassName={(_, disabled) =>
+            disabled
+              ? 'self-end text-xs font-semibold bg-green-500/15 border border-green-500/20 text-green-400 px-3.5 py-1.5 rounded-full cursor-default'
+              : 'self-end text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-1.5 rounded-full transition-colors'}
+          onReleaseAction={(record) => {
+            void handleAddToCollection(record);
+          }}
+          emptyReleasesMessage="No releases in this group match the selected formats."
+        />
+      )}
 
       {!isSearching && search.q && searchPage.total === 0 && (
         <div className="text-center text-gray-500 mt-10">

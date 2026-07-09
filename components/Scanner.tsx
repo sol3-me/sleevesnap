@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { getReleaseGroupReleases, scanImage, searchVinylReleaseGroups, submitScan } from '../services/vinylService';
 import { logEvent, logWarn } from '../services/telemetry';
 import { ScanVisionSuggestion, SearchGroupReleases, SearchResultGroup, VinylRecord } from '../types';
@@ -44,6 +45,14 @@ export const Scanner: React.FC<ScannerProps> = ({
   initialImage,
   onInitialImageConsumed,
 }) => {
+  const confidenceBand = (confidence?: number) => {
+    const score = Math.max(0, Math.min(1, confidence ?? 0));
+    if (score >= 0.85) return 'High';
+    if (score >= 0.6) return 'Medium';
+    if (score >= 0.35) return 'Low';
+    return 'Total Guess';
+  };
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -65,7 +74,6 @@ export const Scanner: React.FC<ScannerProps> = ({
   const [groupReleases, setGroupReleases] = useState<Record<string, SearchGroupReleases>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [loadingGroupIds, setLoadingGroupIds] = useState<Record<string, true>>({});
-  const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
   const [aiGuesses, setAiGuesses] = useState<ScanVisionSuggestion[]>([]);
 
   // ── Camera helpers ──────────────────────────────────────────────────────────
@@ -225,7 +233,6 @@ export const Scanner: React.FC<ScannerProps> = ({
           ms,
         });
         setAiGuesses(result.vision?.guesses ?? []);
-        setFailedCovers({});
         setSearchQuery(suggestedQuery);
         await runGroupedSearch(suggestedQuery);
       } else if (result.vision?.guesses?.length) {
@@ -267,7 +274,6 @@ export const Scanner: React.FC<ScannerProps> = ({
         top: page.groups.slice(0, 3).map((g) => `${g.artist} - ${g.title}`),
         ms: Math.round(performance.now() - startedAt),
       });
-      setFailedCovers({});
       setGroupReleases({});
       setExpandedGroups({});
       setLoadingGroupIds({});
@@ -341,47 +347,9 @@ export const Scanner: React.FC<ScannerProps> = ({
     setGroupReleases({});
     setExpandedGroups({});
     setLoadingGroupIds({});
-    setFailedCovers({});
     setAiGuesses([]);
     setError(null);
     setStage('capture');
-  };
-
-  const formatCountry = (countryCode?: string) => {
-    if (!countryCode) return undefined;
-    const specialRegions: Record<string, string> = {
-      XE: 'Europe',
-      XW: 'Worldwide',
-      XG: 'East Germany',
-    };
-
-    if (specialRegions[countryCode]) {
-      return `${specialRegions[countryCode]} (${countryCode})`;
-    }
-
-    try {
-      const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode);
-      if (name && name !== countryCode) {
-        return `${name} (${countryCode})`;
-      }
-    } catch {
-      // Ignore and fall through to the raw code.
-    }
-
-    return countryCode;
-  };
-
-  const coverFailureKey = (recordId: string, url: string) => `${recordId}::${url}`;
-
-  const getUsableCover = (recordId: string, urls: Array<string | undefined>) => {
-    return urls
-      .map((url) => url?.trim())
-      .filter((url): url is string => Boolean(url))
-      .find((url) => !failedCovers[coverFailureKey(recordId, url)]);
-  };
-
-  const markCoverFailed = (recordId: string, url: string) => {
-    setFailedCovers((prev) => ({ ...prev, [coverFailureKey(recordId, url)]: true }));
   };
 
   const toggleGroupExpanded = async (group: SearchResultGroup) => {
@@ -616,7 +584,10 @@ export const Scanner: React.FC<ScannerProps> = ({
             <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
               <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">AI suggestions</p>
               <div className="flex flex-wrap gap-2">
-                {aiGuesses.slice(0, 4).map((guess, idx) => {
+                {aiGuesses
+                  .slice()
+                  .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+                  .map((guess, idx) => {
                   const query = `${guess.artist} ${guess.title}`;
                   return (
                     <button
@@ -628,10 +599,10 @@ export const Scanner: React.FC<ScannerProps> = ({
                       className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 text-xs text-gray-200 hover:bg-white/10 transition-colors"
                     >
                       {`${guess.artist} - ${guess.title}`}
-                      <span className="text-gray-400 ml-1">{`${Math.round((guess.confidence ?? 0) * 100)}%`}</span>
+                      <span className="text-gray-400 ml-1">{confidenceBand(guess.confidence)}</span>
                     </button>
                   );
-                })}
+                  })}
               </div>
               <p className="text-[11px] text-gray-500 mt-2">
                 AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
@@ -665,101 +636,25 @@ export const Scanner: React.FC<ScannerProps> = ({
 
           {/* Search results */}
           <div className="flex-1 overflow-y-auto space-y-2">
-            {searchGroups.map((group) => {
-              const isExpanded = Boolean(expandedGroups[group.releaseGroupId]);
-              const isLoading = Boolean(loadingGroupIds[group.releaseGroupId]);
-              const details = groupReleases[group.releaseGroupId];
-              const releases = details?.releases ?? [];
-              const groupCover = getUsableCover(`group-${group.releaseGroupId}`, [group.thumbnailUrl]);
-              return (
-              <div
-                key={group.releaseGroupId}
-                className="bg-vinyl-900/70 rounded-xl border border-white/5"
-              >
-                <div className="p-3 flex items-center gap-3">
-                  <div className="w-14 h-14 rounded-lg flex-shrink-0 overflow-hidden bg-vinyl-700 border border-white/10">
-                    {groupCover ? (
-                      <img
-                        src={groupCover}
-                        alt={group.title}
-                        className="w-full h-full object-cover"
-                        onError={() => markCoverFailed(`group-${group.releaseGroupId}`, groupCover)}
-                      />
-                    ) : (
-                      <div className="w-full h-full text-[10px] text-gray-300 flex flex-col items-center justify-center leading-tight">
-                        <span className="text-sm" aria-hidden="true">♪</span>
-                        <span>No art</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-white truncate">{group.title}</p>
-                    <p className="text-sm text-gray-400 truncate">{group.artist}</p>
-                    <p className="text-xs text-gray-500 truncate">
-                      {[group.firstReleaseDate?.slice(0, 4), `${group.totalReleases} release${group.totalReleases === 1 ? '' : 's'}`]
-                        .filter(Boolean)
-                        .join(' • ')}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => void toggleGroupExpanded(group)}
-                    className="flex-shrink-0 text-xs font-semibold bg-white/5 border border-white/10 text-gray-200 px-3.5 py-2 rounded-full hover:bg-white/10 transition-colors"
-                  >
-                    {isExpanded ? 'Hide releases' : 'Show releases'}
-                  </button>
-                </div>
-
-                {isExpanded && (
-                  <div className="px-3 pb-3 border-t border-white/5 space-y-2">
-                    {isLoading && (
-                      <div className="text-xs text-gray-500 py-2">Loading release variants...</div>
-                    )}
-
-                    {!isLoading && releases.length === 0 && (
-                      <div className="text-xs text-gray-500 py-2">No release variants found for this group.</div>
-                    )}
-
-                    {releases.map((record) => {
-                      const releaseCover = getUsableCover(record.id, [record.coverUrl, group.thumbnailUrl]);
-                      const country = formatCountry(record.country);
-                      return (
-                        <div key={record.id} className="flex items-center gap-3 bg-vinyl-950/70 rounded-lg p-2.5 border border-white/5">
-                          <div className="w-11 h-11 rounded-md flex-shrink-0 overflow-hidden bg-vinyl-700 border border-white/10">
-                            {releaseCover ? (
-                              <img
-                                src={releaseCover}
-                                alt={record.title}
-                                className="w-full h-full object-cover"
-                                onError={() => markCoverFailed(record.id, releaseCover)}
-                              />
-                            ) : (
-                              <div className="w-full h-full text-[10px] text-gray-300 flex flex-col items-center justify-center leading-tight">
-                                <span className="text-sm" aria-hidden="true">♪</span>
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-white text-sm truncate">{record.title}</p>
-                            <p className="text-xs text-gray-400 truncate">{record.artist}</p>
-                            <p className="text-[11px] text-gray-500 truncate">
-                              {[record.year, country, record.format, record.releaseStatus].filter(Boolean).join(' • ') || 'Metadata unavailable'}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => confirmSelection(record)}
-                            disabled={stage === 'saving'}
-                            className="flex-shrink-0 text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-2 rounded-full transition-colors disabled:opacity-50"
-                          >
-                            {stage === 'saving' ? '…' : 'Use this'}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              );
-            })}
+            <ReleaseGroupResultsList
+              groups={searchGroups}
+              groupReleases={groupReleases}
+              expandedGroups={expandedGroups}
+              loadingGroupIds={loadingGroupIds}
+              onToggleGroup={(group) => {
+                void toggleGroupExpanded(group);
+              }}
+              onReleaseAction={(record) => {
+                void confirmSelection(record);
+              }}
+              isReleaseActionDisabled={() => stage === 'saving'}
+              getReleaseActionLabel={(_, disabled) => (disabled ? '…' : 'Use this')}
+              getReleaseActionClassName={(_, disabled) =>
+                `self-end text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-1.5 rounded-full transition-colors ${disabled ? 'opacity-50' : ''}`}
+              showGroupLinks={false}
+              groupContainerClassName="bg-vinyl-900/70 rounded-xl border border-white/5"
+              compact
+            />
 
             {stage === 'search_results' && searchGroups.length === 0 && (
               <p className="text-center text-gray-500 py-6">

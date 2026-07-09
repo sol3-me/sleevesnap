@@ -10,28 +10,52 @@ export interface VisionScanResult {
 }
 
 const MAX_WIDTH = 1024;
+const DEFAULT_MAX_GUESSES = 5;
+const DEFAULT_MIN_GUESSES = 3;
 const GEMINI_MODEL = 'gemini-2.5-flash';
 const OPENAI_MODEL = 'gpt-5.4-nano';
 const REQUEST_TIMEOUT_MS = 10000;
 const SCOPE = 'vision';
 
-const PROMPT =
-  'Identify the single vinyl record sleeve shown in this photo. Respond with the ' +
-  "artist name, album title, and your confidence (0 to 1) that the identification " +
-  'is correct. If you can also determine the release year or genre, include them. ' +
-  'Ignore any background objects — there is exactly one record sleeve to identify.';
+function clampGuessLimits(rawMin: number, rawMax: number): { min: number; max: number } {
+  const max = Math.min(10, Math.max(1, rawMax));
+  const min = Math.min(max, Math.max(1, rawMin));
+  return { min, max };
+}
 
-const RESULT_SCHEMA = {
-  type: 'object',
-  properties: {
-    artist: { type: 'string' },
-    title: { type: 'string' },
-    year: { type: 'string' },
-    genre: { type: 'string' },
-    confidence: { type: 'number' },
-  },
-  required: ['artist', 'title', 'confidence'],
-};
+function getGuessLimits() {
+  const configuredMax = Number(process.env.VISION_MAX_GUESSES ?? DEFAULT_MAX_GUESSES);
+  const configuredMin = Number(process.env.VISION_MIN_GUESSES ?? DEFAULT_MIN_GUESSES);
+  return clampGuessLimits(configuredMin, configuredMax);
+}
+
+function buildPrompt(minGuesses: number, maxGuesses: number) {
+  return (
+    'Identify the single vinyl record sleeve shown in this photo. Return a JSON array of candidate guesses, ' +
+    `sorted by confidence descending, with at least ${minGuesses} guesses when possible and up to ${maxGuesses} guesses if uncertain. ` +
+    "Each guess must include artist name, album title, and confidence (0 to 1). " +
+    'If you can determine the release year or genre, include them. Ignore background objects — there is exactly one record sleeve to identify.'
+  );
+}
+
+function buildResultSchema(minGuesses: number, maxGuesses: number) {
+  return {
+    type: 'array',
+    minItems: minGuesses,
+    maxItems: maxGuesses,
+    items: {
+      type: 'object',
+      properties: {
+        artist: { type: 'string' },
+        title: { type: 'string' },
+        year: { type: 'string' },
+        genre: { type: 'string' },
+        confidence: { type: 'number' },
+      },
+      required: ['artist', 'title', 'confidence'],
+    },
+  };
+}
 
 /**
  * Resizes `imageBuffer` to a max width of 1024px (preserving aspect ratio,
@@ -46,37 +70,62 @@ async function resizeForVision(imageBuffer: Buffer): Promise<Buffer> {
   return image.getBuffer('image/jpeg');
 }
 
-/** Parses a provider's raw JSON-string reply into a VisionScanResult, or null if malformed. */
-function parseResult(raw: string | undefined, requestId: string, provider: string): VisionScanResult | null {
+/** Parses a provider's raw JSON-string reply into normalized, confidence-sorted guesses. */
+function parseResults(raw: string | undefined, requestId: string, provider: string, maxGuesses: number): VisionScanResult[] {
   if (!raw) {
     logWarn(SCOPE, requestId, `${provider} returned an empty response body`);
-    return null;
+    return [];
   }
 
   try {
-    const parsed = JSON.parse(raw) as Partial<VisionScanResult>;
-    if (typeof parsed.artist !== 'string' || typeof parsed.title !== 'string') {
+    const parsed = JSON.parse(raw) as Partial<VisionScanResult> | Array<Partial<VisionScanResult>>;
+    const candidates = Array.isArray(parsed) ? parsed : [parsed];
+
+    const cleaned = candidates
+      .filter((candidate) => typeof candidate.artist === 'string' && typeof candidate.title === 'string')
+      .map((candidate) => ({
+        artist: candidate.artist!.trim(),
+        title: candidate.title!.trim(),
+        year: typeof candidate.year === 'string' ? candidate.year : undefined,
+        genre: typeof candidate.genre === 'string' ? candidate.genre : undefined,
+        confidence:
+          typeof candidate.confidence === 'number'
+            ? Math.max(0, Math.min(1, candidate.confidence))
+            : 0,
+      }))
+      .filter((candidate) => candidate.artist.length > 0 && candidate.title.length > 0);
+
+    if (cleaned.length === 0) {
       logWarn(SCOPE, requestId, `${provider} response was missing required fields`, {
         raw: raw.slice(0, 300),
       });
-      return null;
+      return [];
     }
-    return {
-      artist: parsed.artist,
-      title: parsed.title,
-      year: typeof parsed.year === 'string' ? parsed.year : undefined,
-      genre: typeof parsed.genre === 'string' ? parsed.genre : undefined,
-      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0,
-    };
+
+    const deduped = new Map<string, VisionScanResult>();
+    for (const candidate of cleaned) {
+      const key = `${candidate.artist.toLowerCase()}::${candidate.title.toLowerCase()}`;
+      const existing = deduped.get(key);
+      if (!existing || candidate.confidence > existing.confidence) {
+        deduped.set(key, candidate);
+      }
+    }
+
+    return Array.from(deduped.values())
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, maxGuesses);
   } catch {
     logWarn(SCOPE, requestId, `${provider} response was not valid JSON`, { raw: raw.slice(0, 300) });
-    return null;
+    return [];
   }
 }
 
 async function identifyWithGemini(imageBuffer: Buffer, requestId: string): Promise<VisionScanResult[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return [];
+  const { min, max } = getGuessLimits();
+  const prompt = buildPrompt(min, max);
+  const resultSchema = buildResultSchema(min, max);
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
   const res = await fetch(url, {
@@ -90,14 +139,14 @@ async function identifyWithGemini(imageBuffer: Buffer, requestId: string): Promi
       contents: [
         {
           parts: [
-            { text: PROMPT },
+            { text: prompt },
             { inlineData: { mimeType: 'image/jpeg', data: imageBuffer.toString('base64') } },
           ],
         },
       ],
       generationConfig: {
         responseMimeType: 'application/json',
-        responseSchema: RESULT_SCHEMA,
+        responseSchema: resultSchema,
       },
     }),
   });
@@ -112,13 +161,15 @@ async function identifyWithGemini(imageBuffer: Buffer, requestId: string): Promi
   const data = (await res.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
-  const result = parseResult(data.candidates?.[0]?.content?.parts?.[0]?.text, requestId, 'Gemini');
-  return result ? [result] : [];
+  return parseResults(data.candidates?.[0]?.content?.parts?.[0]?.text, requestId, 'Gemini', max);
 }
 
 async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promise<VisionScanResult[]> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return [];
+  const { min, max } = getGuessLimits();
+  const prompt = buildPrompt(min, max);
+  const resultSchema = buildResultSchema(min, max);
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -133,7 +184,7 @@ async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promi
         {
           role: 'user',
           content: [
-            { type: 'text', text: PROMPT },
+            { type: 'text', text: prompt },
             {
               type: 'image_url',
               image_url: {
@@ -146,7 +197,7 @@ async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promi
       ],
       response_format: {
         type: 'json_schema',
-        json_schema: { name: 'vinyl_identification', schema: RESULT_SCHEMA },
+        json_schema: { name: 'vinyl_identification', schema: resultSchema },
       },
     }),
   });
@@ -161,8 +212,7 @@ async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promi
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
-  const result = parseResult(data.choices?.[0]?.message?.content, requestId, 'OpenAI');
-  return result ? [result] : [];
+  return parseResults(data.choices?.[0]?.message?.content, requestId, 'OpenAI', max);
 }
 
 /**

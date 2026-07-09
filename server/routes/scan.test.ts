@@ -286,3 +286,69 @@ test('POST /api/scan returns the local match immediately without calling vision'
     await closeServer(server);
   }
 });
+
+test('POST /api/scan validates multiple AI guesses and returns matches even when top guess is wrong', async () => {
+  process.env.GEMINI_API_KEY = 'test-key';
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = urlOf(input);
+    const normalizedUrl = url.toLowerCase();
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return jsonResponse({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify([
+                    { artist: 'Queens of the Stone Age', title: 'Rated R', confidence: 1.0 },
+                    { artist: 'Queens of the Stone Age', title: 'Songs for the Deaf', confidence: 0.92 },
+                    { artist: 'Queens of the Stone Age', title: 'Lullabies to Paralyze', confidence: 0.6 },
+                  ]),
+                },
+              ],
+            },
+          },
+        ],
+      });
+    }
+
+    if (normalizedUrl.includes('musicbrainz.org/ws/2/release')) {
+      if (normalizedUrl.includes('rated') && normalizedUrl.includes('query=')) {
+        return jsonResponse({ releases: [] });
+      }
+      if (normalizedUrl.includes('songs') && normalizedUrl.includes('deaf')) {
+        return jsonResponse({
+          releases: [
+            {
+              id: 'release-sftd-1',
+              title: 'Songs for the Deaf',
+              date: '2002-08-27',
+              media: [{ format: '12" Vinyl' }],
+              'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+              'release-group': { id: 'group-sftd', title: 'Songs for the Deaf', 'primary-type': 'Album' },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ releases: [] });
+    }
+
+    throw new Error(`Unexpected fetch to ${url}`);
+  }) as typeof fetch;
+
+  const { server, port } = await startTestServer();
+  try {
+    const res = await postScan(port, TINY_JPEG_BASE64);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json.matched, false);
+    assert.equal(Array.isArray(res.json.vision?.guesses), true);
+    assert.equal(res.json.vision?.guesses.length, 3);
+    assert.equal(res.json.vision?.guesses[0]?.title, 'Rated R');
+    assert.equal(res.json.vision?.guesses[1]?.title, 'Songs for the Deaf');
+    assert.equal(Array.isArray(res.json.suggestions), true);
+    assert.equal(res.json.suggestions[0]?.title, 'Songs for the Deaf');
+  } finally {
+    await closeServer(server);
+  }
+});
