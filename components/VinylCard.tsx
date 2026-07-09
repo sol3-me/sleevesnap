@@ -5,9 +5,10 @@ import { Icons } from './Icons';
 interface VinylCardProps {
   record: VinylRecord;
   onRemove?: (id: string) => void;
+  onArtistClick?: (artistName: string) => void | Promise<void>;
 }
 
-export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove }) => {
+export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove, onArtistClick }) => {
   const coverCandidates = useMemo(() => {
     const releaseCoverFromMbid = record.musicBrainzId
       ? `https://coverartarchive.org/release/${record.musicBrainzId}/front-500`
@@ -89,7 +90,21 @@ export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove }) => {
 
       <div className="p-3.5">
         <h3 className="font-semibold text-sm text-white truncate" title={record.title}>{record.title}</h3>
-        <p className="text-xs text-gray-400 truncate mt-0.5" title={record.artist}>{record.artist}</p>
+        <p className="text-xs text-gray-400 truncate mt-0.5" title={record.artist}>
+          {onArtistClick ? (
+            <button
+              type="button"
+              className="hover:text-white underline underline-offset-2 transition-colors"
+              onClick={() => {
+                void onArtistClick(record.artist);
+              }}
+            >
+              {record.artist}
+            </button>
+          ) : (
+            record.artist
+          )}
+        </p>
 
         {metadata.length > 0 && (
           <p className="mt-1.5 text-[11px] text-gray-500 truncate">{metadata.join(' · ')}</p>

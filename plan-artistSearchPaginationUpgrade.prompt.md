@@ -45,3 +45,119 @@ Scope is expanded to include better pagination and estimation for existing searc
 1. Infinite-scroll style is implemented as explicit bottom More results trigger.
 2. User-configurable results per load range is fixed to minimum 5 and maximum 25.
 3. Existing search estimation is upgraded, not replaced, and remains truthful via hasMore/isTotalExact semantics.
+
+---
+
+## Plan Extension: Entity-First Artist/Label Search
+
+Goal: when search type is Artist or Label, do not search albums directly from free text. First return actual MusicBrainz artist/label entities, let the user select one, then run album search constrained to that exact selected entity.
+
+### Why this is needed
+
+1. Name collisions are common (same artist/label name, different entities).
+2. Lucene text matching alone is ambiguous and leads to wrong catalog results.
+3. MBIDs provide deterministic filtering once an entity is chosen.
+
+### UX flow
+
+1. User chooses search type Artist or Label.
+2. User types query and clicks Search.
+3. UI shows entity picker list instead of release-groups:
+4. Artist picker rows: name, disambiguation, country/area, life-span.
+5. Label picker rows: name, disambiguation, label code, country/area, type.
+6. User selects one entity.
+7. UI runs release-group search constrained by selected MBID.
+8. Results header shows active chip, e.g. Artist: Queen (GB).
+9. Clear chip returns user to entity-picker stage for that query.
+
+### API additions
+
+1. POST /api/search/artists
+2. Request: { query, page, pageSize }
+3. Response: { query, page, pageSize, total, hasMore, entities: ArtistSearchEntity[] }
+4. POST /api/search/labels
+5. Request: { query, page, pageSize }
+6. Response: { query, page, pageSize, total, hasMore, entities: LabelSearchEntity[] }
+7. Extend POST /api/search/groups intent:
+8. intent.artistId?: string
+9. intent.labelId?: string
+
+### Backend behavior
+
+1. Artist endpoint queries MusicBrainz artist search and maps stable fields for disambiguation.
+2. Label endpoint queries MusicBrainz label search and maps stable fields for disambiguation.
+3. Group search builder prefers IDs over names when provided:
+4. artist:<mbid> (or arid:<mbid> if supported by endpoint semantics)
+5. label:<mbid> (or laid:<mbid> equivalent)
+6. If only name is present, keep current fielded fallback behavior.
+7. Keep existing format/type filtering model unchanged for now.
+
+### Frontend state model
+
+1. Add entity-selection mode in Discover state machine:
+2. idle -> pickingEntity -> showingGroups
+3. URL params additions:
+4. aid (selected artist MBID)
+5. an (selected artist display name)
+6. lid (selected label MBID)
+7. ln (selected label display name)
+8. Cache keys include selected entity IDs.
+
+### Testing plan
+
+1. Route tests for /api/search/artists and /api/search/labels mapping + pagination.
+2. Route tests proving /api/search/groups builds ID-constrained queries when aid/lid present.
+3. Frontend service tests for new endpoints and cache key separation by MBID.
+4. Discover UI tests for picker -> select -> constrained group search flow.
+
+### Rollout sequence
+
+1. Add new types/contracts in types.ts.
+2. Implement backend artist/label entity routes.
+3. Wire client service methods for entity lookup.
+4. Add Discover entity picker UI and selected-entity chips.
+5. Wire constrained album search with selected MBID.
+6. Validate manually with collision-prone names (for example Queen, London Records).
+
+---
+
+## Plan Extension: Artist and Label Detail Pages
+
+Goal: enable direct navigation to internal Artist/Label summary pages (Spotify-like discovery flow), powered by MusicBrainz data and connected to Discover search context.
+
+### UX goals
+
+1. Users can click through from Discover to a dedicated artist or label page.
+2. Detail pages show canonical identity and a browsable release-group list.
+3. Navigation preserves context (selected artist/label, page, query) and supports deep links.
+
+### Initial slice (start phase)
+
+1. Add routes:
+2. /artists/$artistId
+3. /labels/$labelId
+4. Pass display name in search params (name) for immediate header rendering.
+5. Populate release-groups using indexed MBID-constrained search (artistId/labelId).
+6. Use detail-page infinite scroll (detail pages only) with 20 release-groups per batch.
+
+### Next iterations
+
+1. Add richer artist metadata endpoint by MBID (area, begin/end, tags, aliases).
+2. Add richer label metadata endpoint by MBID (country, type, label code, parent relationships).
+3. Add sections/tabs:
+4. Albums vs singles/EPs vs other primary types.
+5. Year sorting and quick filters.
+6. Click-through from release cards to album/release-group details.
+
+### Discover integration
+
+1. Selected-entity chip includes link to the corresponding detail page.
+2. Artist names in result cards can trigger artist-focused discovery flow.
+3. Label-focused searches can open label detail page after entity selection.
+
+### Verification
+
+1. Route navigation works with direct URL entry.
+2. Artist/label pages show release groups for the selected MBID.
+3. Infinite scroll loads additional 20-item batches on detail pages as users approach the bottom.
+4. Manual browser check confirms click paths from Discover to detail views.

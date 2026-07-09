@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { searchVinylReleaseGroups } from './vinylService.js';
+import { searchArtistEntities, searchLabelEntities, searchVinylReleaseGroups } from './vinylService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const originalFetch = globalThis.fetch;
@@ -144,4 +144,105 @@ test('uses different cache keys for different indexed intent shapes', async () =
   assert.equal(requestedBodies.length, 2);
   assert.deepEqual(requestedBodies[0]?.intent, { title: 'Only by the Night Cache Test' });
   assert.deepEqual(requestedBodies[1]?.intent, { artist: 'Kings of Leon Cache Test' });
+});
+
+test('forwards artist entity lookup payload to /api/search/artists', async () => {
+  let capturedUrl = '';
+  let capturedBody: Record<string, unknown> | undefined;
+  globalThis.fetch = (async (input, init) => {
+    capturedUrl = typeof input === 'string' ? input : input.toString();
+    capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    return jsonResponse({
+      query: 'queen',
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      hasMore: false,
+      entities: [{ id: 'artist-1', name: 'Queen' }],
+    });
+  }) as typeof fetch;
+
+  const res = await searchArtistEntities({ query: 'queen' });
+
+  assert.equal(capturedUrl, '/api/search/artists');
+  assert.deepEqual(capturedBody, { query: 'queen', page: 1, pageSize: 10 });
+  assert.equal(res.entities.length, 1);
+  assert.equal(res.entities[0]?.name, 'Queen');
+});
+
+test('uses distinct caches for artist and label entity lookups', async () => {
+  const calls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    calls.push(url);
+    return jsonResponse({
+      query: 'emi',
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      hasMore: false,
+      entities: [{ id: 'entity-1', name: 'EMI' }],
+    });
+  }) as typeof fetch;
+
+  await searchArtistEntities({ query: 'emi', page: 1, pageSize: 10 });
+  await searchArtistEntities({ query: 'emi', page: 1, pageSize: 10 });
+  await searchLabelEntities({ query: 'emi', page: 1, pageSize: 10 });
+  await searchLabelEntities({ query: 'emi', page: 1, pageSize: 10 });
+
+  assert.deepEqual(calls, ['/api/search/artists', '/api/search/labels']);
+});
+
+test('uses different cache keys for indexed artistId selections', async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return jsonResponse(oneResult);
+  }) as typeof fetch;
+
+  await searchVinylReleaseGroups({
+    mode: 'indexed',
+    intent: { artistId: 'artist-mbid-1', artist: 'Queen' },
+    page: 1,
+    pageSize: 10,
+  });
+
+  await searchVinylReleaseGroups({
+    mode: 'indexed',
+    intent: { artistId: 'artist-mbid-2', artist: 'Queen' },
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.equal(calls, 2);
+});
+
+test('uses different cache keys for indexed primary-type include and exclude filters', async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return jsonResponse(oneResult);
+  }) as typeof fetch;
+
+  await searchVinylReleaseGroups({
+    mode: 'indexed',
+    intent: {
+      artistId: 'artist-mbid-1',
+      primaryTypes: ['album'],
+    },
+    page: 1,
+    pageSize: 10,
+  });
+
+  await searchVinylReleaseGroups({
+    mode: 'indexed',
+    intent: {
+      artistId: 'artist-mbid-1',
+      excludePrimaryTypes: ['album', 'single', 'ep'],
+    },
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.equal(calls, 2);
 });

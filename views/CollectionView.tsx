@@ -1,11 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, Link } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Icons } from '../components/Icons';
 import { VinylCard } from '../components/VinylCard';
 import { collectionQueryKey, useCollectionQuery, useRemoveFromCollectionMutation } from '../hooks/useCollection';
 import { useIsMobileLayout } from '../hooks/useIsMobileLayout';
+import { resolveArtistEntityByName } from '../lib/entityResolvers';
 import { VinylRecord } from '../types';
 
 const routeApi = getRouteApi('/');
@@ -122,6 +123,27 @@ export function CollectionView() {
     });
   };
 
+  const openArtistDetail = useCallback(async (artistName: string) => {
+    const trimmed = artistName.trim();
+    if (!trimmed) return;
+
+    try {
+      const artist = await resolveArtistEntityByName(trimmed);
+      if (!artist) {
+        toast.error('Could not find a matching artist detail page.');
+        return;
+      }
+
+      void navigate({
+        to: '/artists/$artistId',
+        params: { artistId: artist.id },
+        search: { name: artist.name, page: 1 },
+      });
+    } catch {
+      toast.error('Failed to open artist detail page. Please try again.');
+    }
+  }, [navigate]);
+
   return (
     <div className="p-4 md:p-8 pb-28 md:pb-24">
       {/* Desktop-only quick-add FAB — mobile covers this with the bottom
@@ -202,7 +224,13 @@ export function CollectionView() {
                   : undefined
               }
             >
-              <VinylCard record={record} onRemove={handleRemoveFromCollection} />
+              <VinylCard
+                record={record}
+                onRemove={handleRemoveFromCollection}
+                onArtistClick={(artistName) => {
+                  void openArtistDetail(artistName);
+                }}
+              />
             </div>
           ))}
         </div>

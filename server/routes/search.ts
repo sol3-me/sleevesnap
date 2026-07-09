@@ -8,9 +8,11 @@ import {
 
 export const searchRouter = Router();
 
-const DEFAULT_GROUP_PAGE_SIZE = 5;
-const MAX_GROUP_PAGE_SIZE = 5;
+const DEFAULT_GROUP_PAGE_SIZE = 10;
+const MAX_GROUP_PAGE_SIZE = 25;
 const FLAT_SEARCH_LIMIT = 15;
+const DEFAULT_ENTITY_PAGE_SIZE = 10;
+const MAX_ENTITY_PAGE_SIZE = 25;
 
 const appName = process.env.MUSICBRAINZ_APP_NAME ?? 'sleevesnap';
 const gateway = createMusicBrainzCatalogGateway(appName);
@@ -105,6 +107,104 @@ searchRouter.post('/groups', async (req, res) => {
             error: String(err),
         });
         res.status(502).json({ error: 'Failed to search records' });
+    }
+});
+
+// POST /api/search/artists  – entity lookup for artist disambiguation.
+searchRouter.post('/artists', async (req, res) => {
+    const requestId = newRequestId();
+    const startedAt = Date.now();
+    const body = req.body as { query?: string; page?: number; pageSize?: number };
+
+    const query = typeof body.query === 'string' ? body.query.trim() : '';
+    if (!query) {
+        res.status(400).json({ error: 'query is required' });
+        return;
+    }
+
+    const safePage = Math.max(1, Number(body.page ?? 1));
+    const safePageSize = Math.max(
+        1,
+        Math.min(MAX_ENTITY_PAGE_SIZE, Number(body.pageSize ?? DEFAULT_ENTITY_PAGE_SIZE)),
+    );
+
+    try {
+        logEvent('search', requestId, 'Artist entity search request', {
+            query,
+            page: safePage,
+            pageSize: safePageSize,
+        });
+
+        const result = await gateway.searchArtists(query, safePage, safePageSize);
+
+        logEvent('search', requestId, 'Artist entity search results', {
+            query,
+            page: safePage,
+            pageSize: safePageSize,
+            total: result.total,
+            returned: result.entities.length,
+            hasMore: result.hasMore,
+            ms: Date.now() - startedAt,
+        });
+
+        res.json(result);
+    } catch (err) {
+        logWarn('search', requestId, 'Artist entity search failed', {
+            query,
+            page: safePage,
+            pageSize: safePageSize,
+            error: String(err),
+        });
+        res.status(502).json({ error: 'Failed to search artists' });
+    }
+});
+
+// POST /api/search/labels  – entity lookup for label disambiguation.
+searchRouter.post('/labels', async (req, res) => {
+    const requestId = newRequestId();
+    const startedAt = Date.now();
+    const body = req.body as { query?: string; page?: number; pageSize?: number };
+
+    const query = typeof body.query === 'string' ? body.query.trim() : '';
+    if (!query) {
+        res.status(400).json({ error: 'query is required' });
+        return;
+    }
+
+    const safePage = Math.max(1, Number(body.page ?? 1));
+    const safePageSize = Math.max(
+        1,
+        Math.min(MAX_ENTITY_PAGE_SIZE, Number(body.pageSize ?? DEFAULT_ENTITY_PAGE_SIZE)),
+    );
+
+    try {
+        logEvent('search', requestId, 'Label entity search request', {
+            query,
+            page: safePage,
+            pageSize: safePageSize,
+        });
+
+        const result = await gateway.searchLabels(query, safePage, safePageSize);
+
+        logEvent('search', requestId, 'Label entity search results', {
+            query,
+            page: safePage,
+            pageSize: safePageSize,
+            total: result.total,
+            returned: result.entities.length,
+            hasMore: result.hasMore,
+            ms: Date.now() - startedAt,
+        });
+
+        res.json(result);
+    } catch (err) {
+        logWarn('search', requestId, 'Label entity search failed', {
+            query,
+            page: safePage,
+            pageSize: safePageSize,
+            error: String(err),
+        });
+        res.status(502).json({ error: 'Failed to search labels' });
     }
 });
 

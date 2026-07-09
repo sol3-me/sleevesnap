@@ -1,7 +1,9 @@
-const DEFAULT_GROUP_PAGE_SIZE = 5;
-const MAX_GROUP_PAGE_SIZE = 5;
+const DEFAULT_GROUP_PAGE_SIZE = 10;
+const MAX_GROUP_PAGE_SIZE = 25;
 const RELEASE_LIMIT_PER_GROUP = 100;
 const FLAT_SEARCH_LIMIT = 15;
+const ENTITY_SEARCH_DEFAULT_PAGE_SIZE = 10;
+const ENTITY_SEARCH_MAX_PAGE_SIZE = 25;
 const MAX_FETCH_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 300;
 
@@ -52,6 +54,47 @@ interface MusicBrainzReleaseGroupSearchResponse {
     'release-groups'?: MusicBrainzReleaseGroupSearchResult[];
 }
 
+interface MusicBrainzArtistSearchResult {
+    id: string;
+    name: string;
+    disambiguation?: string;
+    country?: string;
+    area?: { name?: string };
+    'begin-area'?: { name?: string };
+    'sort-name'?: string;
+    type?: string;
+    score?: number | string;
+    'life-span'?: {
+        begin?: string;
+        end?: string;
+        ended?: boolean | string;
+    };
+}
+
+interface MusicBrainzArtistSearchResponse {
+    count?: number;
+    offset?: number;
+    artists?: MusicBrainzArtistSearchResult[];
+}
+
+interface MusicBrainzLabelSearchResult {
+    id: string;
+    name: string;
+    disambiguation?: string;
+    country?: string;
+    area?: { name?: string };
+    'sort-name'?: string;
+    type?: string;
+    'label-code'?: number | string;
+    score?: number | string;
+}
+
+interface MusicBrainzLabelSearchResponse {
+    count?: number;
+    offset?: number;
+    labels?: MusicBrainzLabelSearchResult[];
+}
+
 interface CandidateReleaseGroup {
     releaseGroupId: string;
     title: string;
@@ -66,6 +109,42 @@ interface EnrichedReleaseGroup extends CandidateReleaseGroup {
     availableFormats: string[];
     totalReleases: number;
     discogsMasterUrl?: string;
+}
+
+export interface ArtistSearchEntity {
+    id: string;
+    name: string;
+    disambiguation?: string;
+    country?: string;
+    area?: string;
+    beginArea?: string;
+    sortName?: string;
+    type?: string;
+    lifeSpanBegin?: string;
+    lifeSpanEnd?: string;
+    lifeSpanEnded?: boolean;
+    score?: number;
+}
+
+export interface LabelSearchEntity {
+    id: string;
+    name: string;
+    disambiguation?: string;
+    country?: string;
+    area?: string;
+    sortName?: string;
+    type?: string;
+    labelCode?: string;
+    score?: number;
+}
+
+export interface SearchEntitiesResponse<T> {
+    query: string;
+    page: number;
+    pageSize: number;
+    total: number;
+    hasMore: boolean;
+    entities: T[];
 }
 
 export interface SearchReleaseResult {
@@ -92,11 +171,15 @@ export interface SearchReleaseResult {
 
 export interface SearchIntent {
     artist?: string;
+    artistId?: string;
     title?: string;
     year?: string;
     label?: string;
+    labelId?: string;
     format?: string;
     country?: string;
+    primaryTypes?: string[];
+    excludePrimaryTypes?: string[];
 }
 
 export type SearchMode = 'simple' | 'indexed';
@@ -129,6 +212,8 @@ export interface CatalogSearchGateway {
     searchReleasesByText(query: string, limit?: number): Promise<SearchReleaseResult[]>;
     searchGroups(input: SearchGroupsRequest): Promise<SearchGroupsResponse>;
     getReleaseGroupReleases(releaseGroupId: string): Promise<SearchGroupReleases & { discogsMasterUrl?: string }>;
+    searchArtists(query: string, page?: number, pageSize?: number): Promise<SearchEntitiesResponse<ArtistSearchEntity>>;
+    searchLabels(query: string, page?: number, pageSize?: number): Promise<SearchEntitiesResponse<LabelSearchEntity>>;
 }
 
 export function createMusicBrainzCatalogGateway(appName: string): CatalogSearchGateway {
@@ -193,6 +278,60 @@ export function createMusicBrainzCatalogGateway(appName: string): CatalogSearchG
                 availableFormats,
                 discogsMasterUrl,
                 releases: mapped,
+            };
+        },
+
+        async searchArtists(query, page = 1, pageSize = ENTITY_SEARCH_DEFAULT_PAGE_SIZE) {
+            const normalizedQuery = normalizeSearchInput(query);
+            if (!normalizedQuery) {
+                throw new Error('query is required');
+            }
+
+            const safePage = Math.max(1, Number(page ?? 1));
+            const safePageSize = Math.max(
+                1,
+                Math.min(ENTITY_SEARCH_MAX_PAGE_SIZE, Number(pageSize ?? ENTITY_SEARCH_DEFAULT_PAGE_SIZE)),
+            );
+            const offset = (safePage - 1) * safePageSize;
+
+            const response = await fetchArtistsByQuery(normalizedQuery, appName, safePageSize, offset);
+            const entities = (response.artists ?? []).map(mapArtistEntity);
+            const total = response.count ?? 0;
+
+            return {
+                query: normalizedQuery,
+                page: safePage,
+                pageSize: safePageSize,
+                total,
+                hasMore: offset + entities.length < total,
+                entities,
+            };
+        },
+
+        async searchLabels(query, page = 1, pageSize = ENTITY_SEARCH_DEFAULT_PAGE_SIZE) {
+            const normalizedQuery = normalizeSearchInput(query);
+            if (!normalizedQuery) {
+                throw new Error('query is required');
+            }
+
+            const safePage = Math.max(1, Number(page ?? 1));
+            const safePageSize = Math.max(
+                1,
+                Math.min(ENTITY_SEARCH_MAX_PAGE_SIZE, Number(pageSize ?? ENTITY_SEARCH_DEFAULT_PAGE_SIZE)),
+            );
+            const offset = (safePage - 1) * safePageSize;
+
+            const response = await fetchLabelsByQuery(normalizedQuery, appName, safePageSize, offset);
+            const entities = (response.labels ?? []).map(mapLabelEntity);
+            const total = response.count ?? 0;
+
+            return {
+                query: normalizedQuery,
+                page: safePage,
+                pageSize: safePageSize,
+                total,
+                hasMore: offset + entities.length < total,
+                entities,
             };
         },
     };
@@ -359,6 +498,48 @@ async function fetchReleaseGroupsByQuery(
     return (await res.json()) as MusicBrainzReleaseGroupSearchResponse;
 }
 
+async function fetchArtistsByQuery(
+    query: string,
+    appName: string,
+    limit: number,
+    offset: number,
+): Promise<MusicBrainzArtistSearchResponse> {
+    const url = new URL('https://musicbrainz.org/ws/2/artist');
+    url.searchParams.set('query', query);
+    url.searchParams.set('fmt', 'json');
+    url.searchParams.set('limit', String(limit));
+    url.searchParams.set('offset', String(offset));
+
+    const res = await fetchMusicBrainz(url.toString(), appName);
+
+    if (!res.ok) {
+        throw new Error(`MusicBrainz artist search failed (${res.status})`);
+    }
+
+    return (await res.json()) as MusicBrainzArtistSearchResponse;
+}
+
+async function fetchLabelsByQuery(
+    query: string,
+    appName: string,
+    limit: number,
+    offset: number,
+): Promise<MusicBrainzLabelSearchResponse> {
+    const url = new URL('https://musicbrainz.org/ws/2/label');
+    url.searchParams.set('query', query);
+    url.searchParams.set('fmt', 'json');
+    url.searchParams.set('limit', String(limit));
+    url.searchParams.set('offset', String(offset));
+
+    const res = await fetchMusicBrainz(url.toString(), appName);
+
+    if (!res.ok) {
+        throw new Error(`MusicBrainz label search failed (${res.status})`);
+    }
+
+    return (await res.json()) as MusicBrainzLabelSearchResponse;
+}
+
 function mapReleaseGroupCandidate(rg: MusicBrainzReleaseGroupSearchResult): CandidateReleaseGroup {
     return {
         releaseGroupId: rg.id,
@@ -367,6 +548,37 @@ function mapReleaseGroupCandidate(rg: MusicBrainzReleaseGroupSearchResult): Cand
         firstReleaseDate: rg['first-release-date'],
         releaseGroupUrl: `https://musicbrainz.org/release-group/${rg.id}`,
         primaryType: rg['primary-type'],
+    };
+}
+
+function mapArtistEntity(artist: MusicBrainzArtistSearchResult): ArtistSearchEntity {
+    return {
+        id: artist.id,
+        name: artist.name,
+        disambiguation: artist.disambiguation,
+        country: artist.country,
+        area: artist.area?.name,
+        beginArea: artist['begin-area']?.name,
+        sortName: artist['sort-name'],
+        type: artist.type,
+        lifeSpanBegin: artist['life-span']?.begin,
+        lifeSpanEnd: artist['life-span']?.end,
+        lifeSpanEnded: toBoolean(artist['life-span']?.ended),
+        score: toNumber(artist.score),
+    };
+}
+
+function mapLabelEntity(label: MusicBrainzLabelSearchResult): LabelSearchEntity {
+    return {
+        id: label.id,
+        name: label.name,
+        disambiguation: label.disambiguation,
+        country: label.country,
+        area: label.area?.name,
+        sortName: label['sort-name'],
+        type: label.type,
+        labelCode: label['label-code'] !== undefined ? String(label['label-code']) : undefined,
+        score: toNumber(label.score),
     };
 }
 
@@ -545,9 +757,19 @@ function buildFallbackSearchQuery(normalizedInput: string): string {
 
 function buildIndexedReleaseGroupQuery(intent: SearchIntent): string {
     const clauses: string[] = [];
+    const normalizedArtistId = intent.artistId?.trim();
+    const normalizedLabelId = intent.labelId?.trim();
     const normalizedLabel = intent.label?.trim();
+    const includePrimaryTypes = (intent.primaryTypes ?? [])
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0);
+    const excludePrimaryTypes = (intent.excludePrimaryTypes ?? [])
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0);
 
-    if (intent.artist?.trim()) {
+    if (normalizedArtistId) {
+        clauses.push(`arid:${escapeLuceneTerm(normalizedArtistId)}`);
+    } else if (intent.artist?.trim()) {
         const artist = escapeLucenePhrase(intent.artist);
         clauses.push(`(artist:"${artist}" OR artistname:"${artist}")`);
     }
@@ -564,11 +786,14 @@ function buildIndexedReleaseGroupQuery(intent: SearchIntent): string {
         }
     }
 
-    // Label terms are intentionally not hard-required when combined with other
-    // clauses. Live MusicBrainz probes showed strict AND label terms can
-    // collapse otherwise relevant artist/title/year matches to zero results.
-    // For label-only searches (search-type dropdown), we still support a
-    // direct label clause.
+    if (normalizedLabelId) {
+        clauses.push(`laid:${escapeLuceneTerm(normalizedLabelId)}`);
+    }
+
+    // Name-based label terms remain intentionally non-strict when combined
+    // with other clauses. Real MusicBrainz probes showed strict label-name
+    // AND conditions can collapse relevant artist/title/year matches.
+    // Label-only searches still support a direct label name clause.
     if (normalizedLabel && clauses.length === 0) {
         return `label:"${escapeLucenePhrase(normalizedLabel)}"`;
     }
@@ -581,9 +806,39 @@ function buildIndexedReleaseGroupQuery(intent: SearchIntent): string {
         clauses.push(`format:${escapeLuceneTerm(intent.format.trim())}`);
     }
 
+    if (includePrimaryTypes.length === 1) {
+        clauses.push(`primarytype:${escapeLuceneTerm(includePrimaryTypes[0] ?? '')}`);
+    } else if (includePrimaryTypes.length > 1) {
+        clauses.push(`(${includePrimaryTypes.map((value) => `primarytype:${escapeLuceneTerm(value)}`).join(' OR ')})`);
+    }
+
+    if (excludePrimaryTypes.length > 0) {
+        for (const excludedType of excludePrimaryTypes) {
+            clauses.push(`NOT primarytype:${escapeLuceneTerm(excludedType)}`);
+        }
+    }
+
     if (clauses.length === 0) {
         return '';
     }
 
     return clauses.join(' AND ');
+}
+
+function toNumber(value: number | string | undefined): number | undefined {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string' && value.trim()) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+}
+
+function toBoolean(value: boolean | string | undefined): boolean | undefined {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+        if (value.toLowerCase() === 'true') return true;
+        if (value.toLowerCase() === 'false') return false;
+    }
+    return undefined;
 }

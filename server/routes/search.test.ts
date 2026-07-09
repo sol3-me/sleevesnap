@@ -878,3 +878,399 @@ test('POST /api/search/groups supports label-only indexed intent payload for dir
         await closeServer(server);
     }
 });
+
+test('POST /api/search/artists returns mapped artist entities with paging metadata', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/artist') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 12,
+                artists: [
+                    {
+                        id: 'artist-queen',
+                        name: 'Queen',
+                        disambiguation: 'UK rock band',
+                        country: 'GB',
+                        area: { name: 'United Kingdom' },
+                        'begin-area': { name: 'London' },
+                        'sort-name': 'Queen',
+                        type: 'Group',
+                        score: '100',
+                        'life-span': {
+                            begin: '1970-01',
+                            ended: false,
+                        },
+                    },
+                ],
+            });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/artists', 'POST', {
+            query: 'Queen',
+            page: 2,
+            pageSize: 10,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/artist');
+        assert.equal(capturedUrl!.searchParams.get('query'), 'Queen');
+        assert.equal(capturedUrl!.searchParams.get('limit'), '10');
+        assert.equal(capturedUrl!.searchParams.get('offset'), '10');
+
+        assert.equal(res.json.query, 'Queen');
+        assert.equal(res.json.page, 2);
+        assert.equal(res.json.pageSize, 10);
+        assert.equal(res.json.total, 12);
+        assert.equal(res.json.hasMore, true);
+        assert.equal(res.json.entities.length, 1);
+        assert.equal(res.json.entities[0].id, 'artist-queen');
+        assert.equal(res.json.entities[0].name, 'Queen');
+        assert.equal(res.json.entities[0].disambiguation, 'UK rock band');
+        assert.equal(res.json.entities[0].country, 'GB');
+        assert.equal(res.json.entities[0].area, 'United Kingdom');
+        assert.equal(res.json.entities[0].beginArea, 'London');
+        assert.equal(res.json.entities[0].lifeSpanBegin, '1970-01');
+        assert.equal(res.json.entities[0].lifeSpanEnded, false);
+        assert.equal(res.json.entities[0].score, 100);
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/labels returns mapped label entities with paging metadata', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/label') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 31,
+                labels: [
+                    {
+                        id: 'label-emi',
+                        name: 'EMI',
+                        disambiguation: 'UK imprint',
+                        country: 'GB',
+                        area: { name: 'United Kingdom' },
+                        'sort-name': 'EMI',
+                        type: 'Original Production',
+                        'label-code': 123,
+                        score: 88,
+                    },
+                ],
+            });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/labels', 'POST', {
+            query: 'EMI',
+            page: 1,
+            pageSize: 10,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/label');
+        assert.equal(capturedUrl!.searchParams.get('query'), 'EMI');
+        assert.equal(capturedUrl!.searchParams.get('limit'), '10');
+        assert.equal(capturedUrl!.searchParams.get('offset'), '0');
+
+        assert.equal(res.json.query, 'EMI');
+        assert.equal(res.json.page, 1);
+        assert.equal(res.json.pageSize, 10);
+        assert.equal(res.json.total, 31);
+        assert.equal(res.json.hasMore, true);
+        assert.equal(res.json.entities.length, 1);
+        assert.equal(res.json.entities[0].id, 'label-emi');
+        assert.equal(res.json.entities[0].name, 'EMI');
+        assert.equal(res.json.entities[0].disambiguation, 'UK imprint');
+        assert.equal(res.json.entities[0].labelCode, '123');
+        assert.equal(res.json.entities[0].score, 88);
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups prefers artistId as arid clause for exact artist selection', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 1,
+                'release-groups': [
+                    {
+                        id: 'g-arid-1',
+                        title: 'A Night at the Opera',
+                        'artist-credit': [{ artist: { name: 'Queen' } }],
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'r-arid-1',
+                        title: 'A Night at the Opera',
+                        media: [{ format: '12" Vinyl' }],
+                        'artist-credit': [{ artist: { name: 'Queen' } }],
+                        'release-group': { id: 'g-arid-1', title: 'A Night at the Opera' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            mode: 'indexed',
+            intent: {
+                artistId: '0383dadf-2a4e-4d10-a46a-e9e041da8eb3',
+                artist: 'Queen',
+            },
+            page: 1,
+            pageSize: 10,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+        assert.match(
+            builtQuery,
+            /arid:0383dadf\\?-2a4e\\?-4d10\\?-a46a\\?-e9e041da8eb3/,
+            `expected arid clause in query, got: ${builtQuery}`,
+        );
+        assert.equal(builtQuery.includes('artist:"Queen"'), false);
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups uses labelId as laid clause for exact label selection', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 1,
+                'release-groups': [
+                    {
+                        id: 'g-laid-1',
+                        title: 'Some Album',
+                        'artist-credit': [{ artist: { name: 'Some Artist' } }],
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'r-laid-1',
+                        title: 'Some Album',
+                        media: [{ format: 'CD' }],
+                        'artist-credit': [{ artist: { name: 'Some Artist' } }],
+                        'release-group': { id: 'g-laid-1', title: 'Some Album' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            mode: 'indexed',
+            intent: {
+                labelId: 'c029628b-6633-439e-bcee-ed02e8a338f7',
+                label: 'EMI',
+            },
+            page: 1,
+            pageSize: 10,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+        assert.match(
+            builtQuery,
+            /laid:c029628b\\?-6633\\?-439e\\?-bcee\\?-ed02e8a338f7/,
+            `expected laid clause in query, got: ${builtQuery}`,
+        );
+        assert.equal(builtQuery.includes('label:"EMI"'), false);
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups supports indexed primaryTypes include clauses', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 1,
+                'release-groups': [
+                    {
+                        id: 'g-type-include-1',
+                        title: 'Test Album',
+                        'artist-credit': [{ artist: { name: 'Test Artist' } }],
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'r-type-include-1',
+                        title: 'Test Album',
+                        media: [{ format: '12" Vinyl' }],
+                        'artist-credit': [{ artist: { name: 'Test Artist' } }],
+                        'release-group': { id: 'g-type-include-1', title: 'Test Album' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            mode: 'indexed',
+            intent: {
+                artistId: '0383dadf-2a4e-4d10-a46a-e9e041da8eb3',
+                primaryTypes: ['album', 'ep'],
+            },
+            page: 1,
+            pageSize: 10,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+        assert.ok(
+            builtQuery.includes('arid:0383dadf\\-2a4e\\-4d10\\-a46a\\-e9e041da8eb3'),
+            `expected arid clause in query, got: ${builtQuery}`,
+        );
+        assert.ok(builtQuery.includes('(primarytype:album OR primarytype:ep)'));
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups supports indexed excludePrimaryTypes clauses', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 1,
+                'release-groups': [
+                    {
+                        id: 'g-type-exclude-1',
+                        title: 'Test Other Type',
+                        'artist-credit': [{ artist: { name: 'Test Artist' } }],
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'r-type-exclude-1',
+                        title: 'Test Other Type',
+                        media: [{ format: 'CD' }],
+                        'artist-credit': [{ artist: { name: 'Test Artist' } }],
+                        'release-group': { id: 'g-type-exclude-1', title: 'Test Other Type' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            mode: 'indexed',
+            intent: {
+                artistId: '0383dadf-2a4e-4d10-a46a-e9e041da8eb3',
+                excludePrimaryTypes: ['album', 'single', 'ep'],
+            },
+            page: 1,
+            pageSize: 10,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+        assert.ok(builtQuery.includes('NOT primarytype:album'));
+        assert.ok(builtQuery.includes('NOT primarytype:single'));
+        assert.ok(builtQuery.includes('NOT primarytype:ep'));
+    } finally {
+        await closeServer(server);
+    }
+});

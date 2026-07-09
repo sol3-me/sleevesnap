@@ -1,7 +1,9 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { RootLayout } from './components/Layout';
+import { ArtistDetailView } from './views/ArtistDetailView';
 import { CollectionView } from './views/CollectionView';
 import { DiscoverView } from './views/DiscoverView';
+import { LabelDetailView } from './views/LabelDetailView';
 import { ScanView } from './views/ScanView';
 
 const rootRoute = createRootRoute({
@@ -30,6 +32,10 @@ const discoverRoute = createRoute({
     page?: number;
     m?: 'simple' | 'advanced';
     st?: 'title' | 'artist' | 'label';
+    aid?: string;
+    an?: string;
+    lid?: string;
+    ln?: string;
     title?: string;
     artist?: string;
     year?: string;
@@ -39,6 +45,10 @@ const discoverRoute = createRoute({
     page: typeof search.page === 'number' && Number.isFinite(search.page) ? search.page : undefined,
     m: search.m === 'advanced' || search.m === 'simple' ? search.m : undefined,
     st: search.st === 'title' || search.st === 'artist' || search.st === 'label' ? search.st : undefined,
+    aid: typeof search.aid === 'string' ? search.aid : undefined,
+    an: typeof search.an === 'string' ? search.an : undefined,
+    lid: typeof search.lid === 'string' ? search.lid : undefined,
+    ln: typeof search.ln === 'string' ? search.ln : undefined,
     title: typeof search.title === 'string' ? search.title : undefined,
     artist: typeof search.artist === 'string' ? search.artist : undefined,
     year: typeof search.year === 'string' ? search.year : undefined,
@@ -52,7 +62,27 @@ const scanRoute = createRoute({
   component: ScanView,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, discoverRoute, scanRoute]);
+const artistDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/artists/$artistId',
+  component: ArtistDetailView,
+  validateSearch: (search: Record<string, unknown>): { name?: string; page?: number } => ({
+    name: typeof search.name === 'string' ? search.name : undefined,
+    page: typeof search.page === 'number' && Number.isFinite(search.page) ? search.page : undefined,
+  }),
+});
+
+const labelDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/labels/$labelId',
+  component: LabelDetailView,
+  validateSearch: (search: Record<string, unknown>): { name?: string; page?: number } => ({
+    name: typeof search.name === 'string' ? search.name : undefined,
+    page: typeof search.page === 'number' && Number.isFinite(search.page) ? search.page : undefined,
+  }),
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, discoverRoute, scanRoute, artistDetailRoute, labelDetailRoute]);
 
 export const router = createRouter({ routeTree });
 

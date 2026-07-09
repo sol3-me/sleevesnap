@@ -13,6 +13,9 @@ const mobileNavLinkClassName =
 const mobileNavLinkActiveClassName =
   'flex flex-col items-center gap-0.5 min-w-16 py-2 text-[11px] font-medium text-vinyl-accent transition-colors';
 
+const creditClassName =
+  'text-[11px] text-gray-500 px-5 pb-4';
+
 /** The brand mark: a tiny vinyl record next to the wordmark. */
 function Logo() {
   return (
@@ -50,6 +53,16 @@ export function RootLayout() {
               <Icons.Camera /> Scan
             </Link>
           </nav>
+          <div className={creditClassName}>
+            <a
+              href="https://musicbrainz.org"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-gray-300 transition-colors"
+            >
+              powered by musicbrainz <span aria-label="heart">❤</span>
+            </a>
+          </div>
         </aside>
 
         {/* Main Content */}
@@ -64,6 +77,16 @@ export function RootLayout() {
           {/* Mobile Navigation Bar (Bottom Sticky) */}
           {!isScanRoute && (
             <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-vinyl-950/85 backdrop-blur-xl border-t border-white/5 pb-safe">
+              <div className="text-center text-[10px] text-gray-500 pt-2">
+                <a
+                  href="https://musicbrainz.org"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-gray-300 transition-colors"
+                >
+                  powered by musicbrainz <span aria-label="heart">❤</span>
+                </a>
+              </div>
               <div className="flex items-end justify-around px-4">
                 <Link to="/" className={mobileNavLinkClassName} activeProps={{ className: mobileNavLinkActiveClassName }} activeOptions={{ exact: true }}>
                   <Icons.Home />

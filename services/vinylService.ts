@@ -1,6 +1,9 @@
 import {
+  ArtistSearchEntity,
+  LabelSearchEntity,
   ScanResponse,
   ScanUploadPayload,
+  SearchEntityPage,
   SearchGroupReleases,
   SearchIntent,
   SearchMode,
@@ -14,6 +17,12 @@ export interface ReleaseGroupSearchRequest {
   query?: string;
   mode?: SearchMode;
   intent?: SearchIntent;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface SearchEntityRequest {
+  query: string;
   page?: number;
   pageSize?: number;
 }
@@ -149,7 +158,7 @@ export const searchVinylDatabase = async (
 export const searchVinylReleaseGroups = async (
   queryOrRequest: string | ReleaseGroupSearchRequest,
   page = 1,
-  pageSize = 8,
+  pageSize = 10,
 ): Promise<SearchResultPage> => {
   const request: ReleaseGroupSearchRequest =
     typeof queryOrRequest === 'string'
@@ -166,10 +175,18 @@ export const searchVinylReleaseGroups = async (
     intent: {
       title: request.intent?.title?.trim().toLowerCase() ?? '',
       artist: request.intent?.artist?.trim().toLowerCase() ?? '',
+      artistId: request.intent?.artistId?.trim().toLowerCase() ?? '',
       year: request.intent?.year?.trim() ?? '',
       label: request.intent?.label?.trim().toLowerCase() ?? '',
+      labelId: request.intent?.labelId?.trim().toLowerCase() ?? '',
       format: request.intent?.format?.trim().toLowerCase() ?? '',
       country: request.intent?.country?.trim().toLowerCase() ?? '',
+      primaryTypes: (request.intent?.primaryTypes ?? [])
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0),
+      excludePrimaryTypes: (request.intent?.excludePrimaryTypes ?? [])
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0),
     },
     page: request.page,
     pageSize: request.pageSize,
@@ -235,6 +252,82 @@ export const getReleaseGroupReleases = async (
 
   const result = (await res.json()) as SearchGroupReleases;
   setCached(cacheKey, result);
+  return result;
+};
+
+export const searchArtistEntities = async (
+  request: SearchEntityRequest,
+): Promise<SearchEntityPage<ArtistSearchEntity>> => {
+  const payload: SearchEntityRequest = {
+    query: request.query,
+    page: request.page ?? 1,
+    pageSize: request.pageSize ?? 10,
+  };
+
+  const cacheKey = `artists:${JSON.stringify({
+    query: payload.query.trim().toLowerCase(),
+    page: payload.page,
+    pageSize: payload.pageSize,
+  })}`;
+  const cached = getCached<SearchEntityPage<ArtistSearchEntity>>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const res = await fetch('/api/search/artists', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Artist search failed (${res.status})`);
+  }
+
+  const result = (await res.json()) as SearchEntityPage<ArtistSearchEntity>;
+  if (result.entities.length > 0) {
+    setCached(cacheKey, result);
+  }
+
+  return result;
+};
+
+export const searchLabelEntities = async (
+  request: SearchEntityRequest,
+): Promise<SearchEntityPage<LabelSearchEntity>> => {
+  const payload: SearchEntityRequest = {
+    query: request.query,
+    page: request.page ?? 1,
+    pageSize: request.pageSize ?? 10,
+  };
+
+  const cacheKey = `labels:${JSON.stringify({
+    query: payload.query.trim().toLowerCase(),
+    page: payload.page,
+    pageSize: payload.pageSize,
+  })}`;
+  const cached = getCached<SearchEntityPage<LabelSearchEntity>>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const res = await fetch('/api/search/labels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Label search failed (${res.status})`);
+  }
+
+  const result = (await res.json()) as SearchEntityPage<LabelSearchEntity>;
+  if (result.entities.length > 0) {
+    setCached(cacheKey, result);
+  }
+
   return result;
 };
 

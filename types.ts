@@ -57,8 +57,48 @@ export interface SearchIntent {
   title?: string;
   year?: string;
   label?: string;
+  artistId?: string;
+  labelId?: string;
   format?: string;
   country?: string;
+  primaryTypes?: string[];
+  excludePrimaryTypes?: string[];
+}
+
+export interface ArtistSearchEntity {
+  id: string;
+  name: string;
+  disambiguation?: string;
+  country?: string;
+  area?: string;
+  beginArea?: string;
+  sortName?: string;
+  type?: string;
+  lifeSpanBegin?: string;
+  lifeSpanEnd?: string;
+  lifeSpanEnded?: boolean;
+  score?: number;
+}
+
+export interface LabelSearchEntity {
+  id: string;
+  name: string;
+  disambiguation?: string;
+  country?: string;
+  area?: string;
+  sortName?: string;
+  type?: string;
+  labelCode?: string;
+  score?: number;
+}
+
+export interface SearchEntityPage<T> {
+  query: string;
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+  entities: T[];
 }
 
 export type SearchMode = 'simple' | 'indexed';

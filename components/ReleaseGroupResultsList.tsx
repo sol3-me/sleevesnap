@@ -20,6 +20,9 @@ interface ReleaseGroupResultsListProps {
     emptyReleasesMessage?: string;
     compact?: boolean;
     showFormatBuckets?: boolean;
+    onArtistNameClick?: (artistName: string) => void | Promise<void>;
+    labelContext?: { id?: string; name: string };
+    onLabelNameClick?: (labelName: string, labelId?: string) => void | Promise<void>;
 }
 
 function formatCountry(countryCode?: string) {
@@ -63,6 +66,9 @@ export function ReleaseGroupResultsList({
     emptyReleasesMessage = 'No releases found for this group.',
     compact = false,
     showFormatBuckets = false,
+    onArtistNameClick,
+    labelContext,
+    onLabelNameClick,
 }: ReleaseGroupResultsListProps) {
     const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
 
@@ -164,7 +170,41 @@ export function ReleaseGroupResultsList({
                                             )}
                                         </div>
                                     </div>
-                                    <p className={`${compact ? 'text-xs' : 'text-sm'} text-gray-400 truncate mt-0.5`}>{group.artist}</p>
+                                    <p className={`${compact ? 'text-xs' : 'text-sm'} text-gray-400 truncate mt-0.5`}>
+                                        {onArtistNameClick ? (
+                                            <button
+                                                type="button"
+                                                className="hover:text-white underline underline-offset-2 transition-colors"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    void onArtistNameClick(group.artist);
+                                                }}
+                                            >
+                                                {group.artist}
+                                            </button>
+                                        ) : (
+                                            group.artist
+                                        )}
+                                    </p>
+                                    {labelContext?.name && (
+                                        <p className="text-xs text-gray-500 truncate mt-0.5">
+                                            Label:{' '}
+                                            {onLabelNameClick ? (
+                                                <button
+                                                    type="button"
+                                                    className="hover:text-white underline underline-offset-2 transition-colors"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        void onLabelNameClick(labelContext.name, labelContext.id);
+                                                    }}
+                                                >
+                                                    {labelContext.name}
+                                                </button>
+                                            ) : (
+                                                labelContext.name
+                                            )}
+                                        </p>
+                                    )}
                                     <p className="text-xs text-gray-500 mt-1.5 truncate">
                                         {[
                                             group.firstReleaseDate?.slice(0, 4),
@@ -255,7 +295,39 @@ export function ReleaseGroupResultsList({
                                                         <div className="min-w-0 flex-1 flex flex-col justify-between">
                                                             <div>
                                                                 <h4 className={`${compact ? 'text-sm' : 'text-base'} font-bold text-white truncate`}>{record.title}</h4>
-                                                                <p className={`${compact ? 'text-xs' : 'text-sm'} text-gray-400 truncate`}>{record.artist}</p>
+                                                                <p className={`${compact ? 'text-xs' : 'text-sm'} text-gray-400 truncate`}>
+                                                                    {onArtistNameClick ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            className="hover:text-white underline underline-offset-2 transition-colors"
+                                                                            onClick={() => {
+                                                                                void onArtistNameClick(record.artist);
+                                                                            }}
+                                                                        >
+                                                                            {record.artist}
+                                                                        </button>
+                                                                    ) : (
+                                                                        record.artist
+                                                                    )}
+                                                                </p>
+                                                                {labelContext?.name && (
+                                                                    <p className="text-xs text-gray-500 truncate">
+                                                                        Label:{' '}
+                                                                        {onLabelNameClick ? (
+                                                                            <button
+                                                                                type="button"
+                                                                                className="hover:text-white underline underline-offset-2 transition-colors"
+                                                                                onClick={() => {
+                                                                                    void onLabelNameClick(labelContext.name, labelContext.id);
+                                                                                }}
+                                                                            >
+                                                                                {labelContext.name}
+                                                                            </button>
+                                                                        ) : (
+                                                                            labelContext.name
+                                                                        )}
+                                                                    </p>
+                                                                )}
                                                                 <p className="text-xs text-gray-500 mt-1 truncate">
                                                                     {[record.year, country, record.format, record.releaseStatus, record.genre]
                                                                         .filter(Boolean)
