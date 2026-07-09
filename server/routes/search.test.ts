@@ -633,3 +633,74 @@ test('searchReleasesByText filters to vinyl formats only, matching POST / behavi
     assert.equal(results.length, 1);
     assert.equal(results[0]?.musicBrainzId, 'release-vinyl');
 });
+
+    test('POST /api/search/groups accepts indexed intent payload and builds a fielded query without a plain query string', async () => {
+        let capturedUrl: URL | undefined;
+        globalThis.fetch = (async (input) => {
+            const target =
+                typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+            const url = new URL(target);
+
+            if (url.pathname === '/ws/2/release-group') {
+                capturedUrl = url;
+                return jsonResponse({
+                    count: 1,
+                    'release-groups': [
+                        {
+                            id: 'g-intent-1',
+                            title: 'Songs for the Deaf',
+                            'first-release-date': '2002-08-27',
+                            'primary-type': 'Album',
+                            'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                        },
+                    ],
+                });
+            }
+
+            if (url.pathname === '/ws/2/release') {
+                return jsonResponse({
+                    releases: [
+                        {
+                            id: 'r-intent-1',
+                            title: 'Songs for the Deaf',
+                            media: [{ format: '12" Vinyl' }],
+                            'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                            'release-group': { id: 'g-intent-1', title: 'Songs for the Deaf' },
+                        },
+                    ],
+                });
+            }
+
+            if (url.pathname.startsWith('/ws/2/release-group/')) {
+                return jsonResponse({ relations: [] });
+            }
+
+            return jsonResponse({ error: 'not found' }, 404);
+        }) as typeof fetch;
+
+        const { server, port } = await startTestServer();
+
+        try {
+            const res = await requestJson(port, '/api/search/groups', 'POST', {
+                mode: 'indexed',
+                intent: {
+                    artist: 'Queens of the Stone Age',
+                    title: 'Songs for the Deaf',
+                    year: '2002',
+                    label: 'Interscope',
+                },
+                page: 1,
+                pageSize: 5,
+            });
+
+            assert.equal(res.statusCode, 200);
+            assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+            const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+            assert.ok(builtQuery.includes('artist:"Queens of the Stone Age"'));
+            assert.ok(builtQuery.includes('releasegroup:"Songs for the Deaf"'));
+            assert.ok(builtQuery.includes('firstreleasedate:2002'));
+            assert.ok(builtQuery.includes('Interscope'));
+        } finally {
+            await closeServer(server);
+        }
+    });
