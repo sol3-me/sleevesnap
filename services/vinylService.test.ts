@@ -96,3 +96,52 @@ test('throws on a failed request instead of returning a fake empty page', async 
 
   await assert.rejects(() => searchVinylReleaseGroups('anything', 1, 5));
 });
+
+test('forwards indexed intent payload to /api/search/groups for field-specific search mode', async () => {
+  let capturedBody: Record<string, unknown> | undefined;
+  globalThis.fetch = (async (_input, init) => {
+    capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+    return jsonResponse(oneResult);
+  }) as typeof fetch;
+
+  await searchVinylReleaseGroups({
+    mode: 'indexed',
+    intent: {
+      artist: 'Kings of Leon',
+    },
+    page: 1,
+    pageSize: 5,
+  });
+
+  assert.ok(capturedBody);
+  assert.equal(capturedBody.mode, 'indexed');
+  assert.deepEqual(capturedBody.intent, { artist: 'Kings of Leon' });
+  assert.equal(capturedBody.page, 1);
+  assert.equal(capturedBody.pageSize, 5);
+});
+
+test('uses different cache keys for different indexed intent shapes', async () => {
+  const requestedBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_input, init) => {
+    requestedBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+    return jsonResponse(oneResult);
+  }) as typeof fetch;
+
+  await searchVinylReleaseGroups({
+    mode: 'indexed',
+    intent: { title: 'Only by the Night Cache Test' },
+    page: 1,
+    pageSize: 5,
+  });
+
+  await searchVinylReleaseGroups({
+    mode: 'indexed',
+    intent: { artist: 'Kings of Leon Cache Test' },
+    page: 1,
+    pageSize: 5,
+  });
+
+  assert.equal(requestedBodies.length, 2);
+  assert.deepEqual(requestedBodies[0]?.intent, { title: 'Only by the Night Cache Test' });
+  assert.deepEqual(requestedBodies[1]?.intent, { artist: 'Kings of Leon Cache Test' });
+});

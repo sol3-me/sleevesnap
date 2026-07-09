@@ -25,9 +25,24 @@ const discoverRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/discover',
   component: DiscoverView,
-  validateSearch: (search: Record<string, unknown>): { q?: string; page?: number } => ({
+  validateSearch: (search: Record<string, unknown>): {
+    q?: string;
+    page?: number;
+    m?: 'simple' | 'advanced';
+    st?: 'title' | 'artist' | 'label';
+    title?: string;
+    artist?: string;
+    year?: string;
+    label?: string;
+  } => ({
     q: typeof search.q === 'string' ? search.q : undefined,
     page: typeof search.page === 'number' && Number.isFinite(search.page) ? search.page : undefined,
+    m: search.m === 'advanced' || search.m === 'simple' ? search.m : undefined,
+    st: search.st === 'title' || search.st === 'artist' || search.st === 'label' ? search.st : undefined,
+    title: typeof search.title === 'string' ? search.title : undefined,
+    artist: typeof search.artist === 'string' ? search.artist : undefined,
+    year: typeof search.year === 'string' ? search.year : undefined,
+    label: typeof search.label === 'string' ? search.label : undefined,
   }),
 });
 

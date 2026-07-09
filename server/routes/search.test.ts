@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, test } from 'node:test';
-import { searchRouter, searchReleasesByText } from './search.js';
+import { fileURLToPath } from 'node:url';
+import { searchReleasesByText, searchRouter } from './search.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,7 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // returns every candidate unfiltered, each enriched with its real formats,
 // rather than dropping the ones that don't have a physical release.
 function loadRgFixture(name: string) {
-  return JSON.parse(fs.readFileSync(path.join(__dirname, '__fixtures__', name), 'utf-8'));
+    return JSON.parse(fs.readFileSync(path.join(__dirname, '__fixtures__', name), 'utf-8'));
 }
 
 const rgPage1 = loadRgFixture('release-group-search-qotsa-page1-real.json');
@@ -319,15 +319,17 @@ test('POST /api/search/groups queries the release-group endpoint directly with t
             // (count: 1) never needs a follow-up fallback call — this is the
             // only call to /ws/2/release-group this test expects.
             capturedUrl = url;
-            return jsonResponse({ count: 1, 'release-groups': [
-                {
-                    id: 'g1',
-                    title: 'Rated R',
-                    'first-release-date': '2000-01-01',
-                    'primary-type': 'Album',
-                    'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
-                },
-            ] });
+            return jsonResponse({
+                count: 1, 'release-groups': [
+                    {
+                        id: 'g1',
+                        title: 'Rated R',
+                        'first-release-date': '2000-01-01',
+                        'primary-type': 'Album',
+                        'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                    },
+                ]
+            });
         }
         if (url.pathname === '/ws/2/release') {
             return jsonResponse({
@@ -365,6 +367,45 @@ test('POST /api/search/groups queries the release-group endpoint directly with t
             capturedUrl!.searchParams.get('query'),
             '(releasegroup:"Rated R" OR release:"Rated R" OR artist:"Rated R")',
         );
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups normalizes punctuation-heavy free-text input before building Lucene query', async () => {
+    let capturedUrl: URL | undefined;
+
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({ count: 0, 'release-groups': [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            query: 'Queens of the Stone Age - Songs for the Deaf (2002)',
+            page: 1,
+            pageSize: 5,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+        assert.equal(builtQuery.includes('(2002)'), false);
+        assert.equal(builtQuery.includes('Queens'), true);
+        assert.equal(builtQuery.includes('Songs'), true);
+        assert.equal(builtQuery.includes('Deaf'), true);
+        assert.equal(builtQuery.includes('2002'), true);
+        assert.equal(builtQuery.includes('Stone Age - Songs'), false);
     } finally {
         await closeServer(server);
     }
@@ -634,73 +675,206 @@ test('searchReleasesByText filters to vinyl formats only, matching POST / behavi
     assert.equal(results[0]?.musicBrainzId, 'release-vinyl');
 });
 
-    test('POST /api/search/groups accepts indexed intent payload and builds a fielded query without a plain query string', async () => {
-        let capturedUrl: URL | undefined;
-        globalThis.fetch = (async (input) => {
-            const target =
-                typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-            const url = new URL(target);
+test('POST /api/search/groups accepts indexed intent payload and builds a fielded query without a plain query string', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
 
-            if (url.pathname === '/ws/2/release-group') {
-                capturedUrl = url;
-                return jsonResponse({
-                    count: 1,
-                    'release-groups': [
-                        {
-                            id: 'g-intent-1',
-                            title: 'Songs for the Deaf',
-                            'first-release-date': '2002-08-27',
-                            'primary-type': 'Album',
-                            'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
-                        },
-                    ],
-                });
-            }
-
-            if (url.pathname === '/ws/2/release') {
-                return jsonResponse({
-                    releases: [
-                        {
-                            id: 'r-intent-1',
-                            title: 'Songs for the Deaf',
-                            media: [{ format: '12" Vinyl' }],
-                            'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
-                            'release-group': { id: 'g-intent-1', title: 'Songs for the Deaf' },
-                        },
-                    ],
-                });
-            }
-
-            if (url.pathname.startsWith('/ws/2/release-group/')) {
-                return jsonResponse({ relations: [] });
-            }
-
-            return jsonResponse({ error: 'not found' }, 404);
-        }) as typeof fetch;
-
-        const { server, port } = await startTestServer();
-
-        try {
-            const res = await requestJson(port, '/api/search/groups', 'POST', {
-                mode: 'indexed',
-                intent: {
-                    artist: 'Queens of the Stone Age',
-                    title: 'Songs for the Deaf',
-                    year: '2002',
-                    label: 'Interscope',
-                },
-                page: 1,
-                pageSize: 5,
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 1,
+                'release-groups': [
+                    {
+                        id: 'g-intent-1',
+                        title: 'Songs for the Deaf',
+                        'first-release-date': '2002-08-27',
+                        'primary-type': 'Album',
+                        'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                    },
+                ],
             });
-
-            assert.equal(res.statusCode, 200);
-            assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
-            const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
-            assert.ok(builtQuery.includes('artist:"Queens of the Stone Age"'));
-            assert.ok(builtQuery.includes('releasegroup:"Songs for the Deaf"'));
-            assert.ok(builtQuery.includes('firstreleasedate:2002'));
-            assert.ok(builtQuery.includes('Interscope'));
-        } finally {
-            await closeServer(server);
         }
-    });
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'r-intent-1',
+                        title: 'Songs for the Deaf',
+                        media: [{ format: '12" Vinyl' }],
+                        'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+                        'release-group': { id: 'g-intent-1', title: 'Songs for the Deaf' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            mode: 'indexed',
+            intent: {
+                artist: 'Queens of the Stone Age',
+                title: 'Songs for the Deaf',
+                year: '2002',
+                label: 'Interscope',
+            },
+            page: 1,
+            pageSize: 5,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+        assert.ok(builtQuery.includes('artist:"Queens of the Stone Age"'));
+        assert.ok(builtQuery.includes('releasegroup:"Songs for the Deaf"'));
+        assert.ok(builtQuery.includes('firstreleasedate:2002'));
+        // Real MusicBrainz probes showed strict AND label terms can
+        // over-constrain indexed queries to zero results.
+        assert.equal(builtQuery.includes('Interscope'), false);
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups supports artist-only indexed intent payload for direct artist searches', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 1,
+                'release-groups': [
+                    {
+                        id: 'g-artist-1',
+                        title: 'Only by the Night',
+                        'first-release-date': '2008-09-19',
+                        'primary-type': 'Album',
+                        'artist-credit': [{ artist: { name: 'Kings of Leon' } }],
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'r-artist-1',
+                        title: 'Only by the Night',
+                        media: [{ format: '12" Vinyl' }],
+                        'artist-credit': [{ artist: { name: 'Kings of Leon' } }],
+                        'release-group': { id: 'g-artist-1', title: 'Only by the Night' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            mode: 'indexed',
+            intent: {
+                artist: 'Kings of Leon',
+            },
+            page: 1,
+            pageSize: 5,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+        assert.ok(builtQuery.includes('artist:"Kings of Leon"'));
+        assert.equal(builtQuery.includes('releasegroup:'), false);
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups supports label-only indexed intent payload for direct label searches', async () => {
+    let capturedUrl: URL | undefined;
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            capturedUrl = url;
+            return jsonResponse({
+                count: 1,
+                'release-groups': [
+                    {
+                        id: 'g-label-1',
+                        title: 'Random Access Memories',
+                        'first-release-date': '2013-05-17',
+                        'primary-type': 'Album',
+                        'artist-credit': [{ artist: { name: 'Daft Punk' } }],
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'r-label-1',
+                        title: 'Random Access Memories',
+                        media: [{ format: '12" Vinyl' }],
+                        'artist-credit': [{ artist: { name: 'Daft Punk' } }],
+                        'release-group': { id: 'g-label-1', title: 'Random Access Memories' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups', 'POST', {
+            mode: 'indexed',
+            intent: {
+                label: 'Columbia',
+            },
+            page: 1,
+            pageSize: 5,
+        });
+
+        assert.equal(res.statusCode, 200);
+        assert.ok(capturedUrl, 'expected a call to /ws/2/release-group');
+        const builtQuery = capturedUrl!.searchParams.get('query') ?? '';
+        assert.ok(builtQuery.includes('label:"Columbia"'));
+    } finally {
+        await closeServer(server);
+    }
+});

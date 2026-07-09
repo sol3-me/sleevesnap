@@ -15,7 +15,7 @@ import {
   typeBucketForGroup,
 } from '../lib/filters';
 import { logEvent, logWarn } from '../services/telemetry';
-import { getReleaseGroupReleases, searchVinylReleaseGroups } from '../services/vinylService';
+import { DiscoverSearchType, getReleaseGroupReleases, searchVinylReleaseGroups } from '../services/vinylService';
 import { SearchGroupReleases, SearchResultGroup, SearchResultPage, VinylRecord } from '../types';
 
 const routeApi = getRouteApi('/discover');
@@ -40,10 +40,13 @@ export function DiscoverView() {
   const { data: collection } = useCollectionQuery();
   const addMutation = useAddToCollectionMutation();
 
-  // The committed query/page live in the URL (search.q / search.page) so
-  // they're shareable and survive back/forward — inputValue is just the
-  // free-typing draft in the search box until Enter/Search commits it.
+  const [searchMode, setSearchMode] = useState<'simple' | 'advanced'>(search.m ?? 'simple');
+  const [simpleSearchType, setSimpleSearchType] = useState<DiscoverSearchType>(search.st ?? 'title');
   const [inputValue, setInputValue] = useState(search.q ?? '');
+  const [advancedTitle, setAdvancedTitle] = useState(search.title ?? '');
+  const [advancedArtist, setAdvancedArtist] = useState(search.artist ?? '');
+  const [advancedYear, setAdvancedYear] = useState(search.year ?? '');
+  const [advancedLabel, setAdvancedLabel] = useState(search.label ?? '');
   const [searchPage, setSearchPage] = useState<SearchResultPage>(defaultSearchPage);
   const [groupReleases, setGroupReleases] = useState<Record<string, SearchGroupReleases>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
@@ -58,8 +61,62 @@ export function DiscoverView() {
   const previousQueryRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
+    setSearchMode(search.m ?? 'simple');
+    setSimpleSearchType(search.st ?? 'title');
     setInputValue(search.q ?? '');
-  }, [search.q]);
+    setAdvancedTitle(search.title ?? '');
+    setAdvancedArtist(search.artist ?? '');
+    setAdvancedYear(search.year ?? '');
+    setAdvancedLabel(search.label ?? '');
+  }, [search.m, search.st, search.q, search.title, search.artist, search.year, search.label]);
+
+  const hasCommittedSearch = Boolean(
+    (search.m === 'advanced' && (search.title || search.artist || search.year || search.label)) ||
+    ((search.m ?? 'simple') === 'simple' && search.q),
+  );
+
+  const getSearchRequestFromUrl = useCallback(() => {
+    if ((search.m ?? 'simple') === 'advanced') {
+      const intent = {
+        title: search.title?.trim() || undefined,
+        artist: search.artist?.trim() || undefined,
+        year: search.year?.trim() || undefined,
+        label: search.label?.trim() || undefined,
+      };
+
+      if (!intent.title && !intent.artist && !intent.year && !intent.label) {
+        return undefined;
+      }
+
+      return {
+        mode: 'indexed' as const,
+        intent,
+      };
+    }
+
+    const q = search.q?.trim();
+    if (!q) return undefined;
+
+    const searchType = search.st ?? 'title';
+    if (searchType === 'artist') {
+      return {
+        mode: 'indexed' as const,
+        intent: { artist: q },
+      };
+    }
+
+    if (searchType === 'label') {
+      return {
+        mode: 'indexed' as const,
+        intent: { label: q },
+      };
+    }
+
+    return {
+      mode: 'indexed' as const,
+      intent: { title: q },
+    };
+  }, [search.m, search.q, search.st, search.title, search.artist, search.year, search.label]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -79,14 +136,22 @@ export function DiscoverView() {
     }
   }, [typeFilters]);
 
-  const runSearch = useCallback(async (page: number, query: string, isNewQuery: boolean) => {
+  const runSearch = useCallback(async (page: number, isNewQuery: boolean) => {
+    const request = getSearchRequestFromUrl();
+    if (!request) return;
+
     setIsSearching(true);
     const startedAt = performance.now();
 
     try {
-      const result = await searchVinylReleaseGroups(query, page, SEARCH_PAGE_SIZE);
+      const result = await searchVinylReleaseGroups({
+        ...request,
+        page,
+        pageSize: SEARCH_PAGE_SIZE,
+      });
+      const telemetryQuery = result.query || search.q || search.title || search.artist || search.label || '';
       logEvent('discover', 'Search results', {
-        query,
+        query: telemetryQuery,
         page,
         total: result.total,
         returned: result.groups.length,
@@ -121,25 +186,77 @@ export function DiscoverView() {
       // Leave the previously-shown results in place rather than replacing
       // them with an empty page — a failed "next page" fetch shouldn't wipe
       // out the page the user is already looking at.
-      logWarn('discover', 'Search failed', { query, page, error: err instanceof Error ? err.message : String(err) });
+      logWarn('discover', 'Search failed', {
+        mode: search.m ?? 'simple',
+        query: search.q,
+        title: search.title,
+        artist: search.artist,
+        year: search.year,
+        label: search.label,
+        page,
+        error: err instanceof Error ? err.message : String(err),
+      });
       toast.error('Search failed. Please try again.');
     } finally {
       setIsSearching(false);
     }
-  }, []);
+  }, [getSearchRequestFromUrl, search.m, search.q, search.title, search.artist, search.year, search.label]);
 
   useEffect(() => {
-    const q = search.q?.trim();
-    if (!q) return;
-    const isNewQuery = previousQueryRef.current !== q;
-    previousQueryRef.current = q;
-    void runSearch(search.page ?? 1, q, isNewQuery);
-  }, [search.q, search.page, runSearch]);
+    const identity = JSON.stringify({
+      mode: search.m ?? 'simple',
+      st: search.st ?? 'title',
+      q: search.q ?? '',
+      title: search.title ?? '',
+      artist: search.artist ?? '',
+      year: search.year ?? '',
+      label: search.label ?? '',
+    });
+
+    if (!hasCommittedSearch) return;
+
+    const isNewQuery = previousQueryRef.current !== identity;
+    previousQueryRef.current = identity;
+    void runSearch(search.page ?? 1, isNewQuery);
+  }, [search.m, search.st, search.q, search.title, search.artist, search.year, search.label, search.page, hasCommittedSearch, runSearch]);
 
   const submitSearch = () => {
+    if (searchMode === 'advanced') {
+      const title = advancedTitle.trim();
+      const artist = advancedArtist.trim();
+      const year = advancedYear.trim();
+      const label = advancedLabel.trim();
+      if (!title && !artist && !year && !label) return;
+
+      void navigate({
+        search: {
+          m: 'advanced',
+          st: undefined,
+          q: undefined,
+          title: title || undefined,
+          artist: artist || undefined,
+          year: year || undefined,
+          label: label || undefined,
+          page: 1,
+        },
+      });
+      return;
+    }
+
     const trimmed = inputValue.trim();
     if (!trimmed) return;
-    void navigate({ search: { q: trimmed, page: 1 } });
+    void navigate({
+      search: {
+        m: 'simple',
+        st: simpleSearchType,
+        q: trimmed,
+        title: undefined,
+        artist: undefined,
+        year: undefined,
+        label: undefined,
+        page: 1,
+      },
+    });
   };
 
   const goToPage = (page: number) => {
@@ -297,19 +414,90 @@ export function DiscoverView() {
     <div className="p-4 md:p-8 pb-28 md:pb-24">
       <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-5 md:mb-6">Discover</h2>
       <div className="flex flex-col gap-3 mb-5">
+        <div className="inline-flex w-fit rounded-xl border border-white/10 bg-vinyl-800/60 p-1">
+          <button
+            type="button"
+            onClick={() => setSearchMode('simple')}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+              searchMode === 'simple' ? 'bg-vinyl-accent text-white' : 'text-gray-300 hover:text-white'
+            }`}
+          >
+            Simple Search
+          </button>
+          <button
+            type="button"
+            onClick={() => setSearchMode('advanced')}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+              searchMode === 'advanced' ? 'bg-vinyl-accent text-white' : 'text-gray-300 hover:text-white'
+            }`}
+          >
+            Advanced Search
+          </button>
+        </div>
+
         <div className="flex gap-2">
-          <div className="relative flex-1">
-            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none [&>svg]:w-4.5 [&>svg]:h-4.5">
-              <Icons.Search />
-            </span>
-            <input
-              type="search"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-              placeholder="Search artist or album..."
-              className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
-            />
+          <div className="flex-1 space-y-2">
+            {searchMode === 'simple' ? (
+              <div className="flex gap-2">
+                <select
+                  value={simpleSearchType}
+                  onChange={(e) => setSimpleSearchType(e.target.value as DiscoverSearchType)}
+                  className="bg-vinyl-800/80 text-white border border-white/10 rounded-xl px-3 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
+                >
+                  <option value="title">Title</option>
+                  <option value="artist">Artist</option>
+                  <option value="label">Label</option>
+                </select>
+                <div className="relative flex-1">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none [&>svg]:w-4.5 [&>svg]:h-4.5">
+                    <Icons.Search />
+                  </span>
+                  <input
+                    type="search"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+                    placeholder={`Search by ${simpleSearchType}...`}
+                    className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={advancedTitle}
+                  onChange={(e) => setAdvancedTitle(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+                  placeholder="Title"
+                  className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
+                />
+                <input
+                  type="text"
+                  value={advancedArtist}
+                  onChange={(e) => setAdvancedArtist(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+                  placeholder="Artist"
+                  className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
+                />
+                <input
+                  type="text"
+                  value={advancedYear}
+                  onChange={(e) => setAdvancedYear(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+                  placeholder="Year"
+                  className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
+                />
+                <input
+                  type="text"
+                  value={advancedLabel}
+                  onChange={(e) => setAdvancedLabel(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+                  placeholder="Label"
+                  className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
+                />
+              </div>
+            )}
           </div>
           <button
             onClick={submitSearch}
@@ -393,13 +581,13 @@ export function DiscoverView() {
         />
       )}
 
-      {!isSearching && search.q && searchPage.total === 0 && (
+      {!isSearching && hasCommittedSearch && searchPage.total === 0 && (
         <div className="text-center text-gray-500 mt-10">
           No results found. Try a different query.
         </div>
       )}
 
-      {!isSearching && search.q && searchPage.total > 0 && filteredGroups.length === 0 && (
+      {!isSearching && hasCommittedSearch && searchPage.total > 0 && filteredGroups.length === 0 && (
         <div className="text-center text-gray-500 mt-10">
           {`${searchPage.groups.length} release group${searchPage.groups.length === 1 ? '' : 's'} found on this page, but none match your selected filters above.`}
         </div>

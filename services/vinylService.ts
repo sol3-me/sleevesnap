@@ -2,9 +2,21 @@ import {
   ScanResponse,
   ScanUploadPayload,
   SearchGroupReleases,
+  SearchIntent,
+  SearchMode,
   SearchResultPage,
   VinylRecord,
 } from '../types';
+
+export type DiscoverSearchType = 'title' | 'artist' | 'label';
+
+export interface ReleaseGroupSearchRequest {
+  query?: string;
+  mode?: SearchMode;
+  intent?: SearchIntent;
+  page?: number;
+  pageSize?: number;
+}
 
 const CACHE_PREFIX = 'sleevesnap:search:v5:';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -135,11 +147,35 @@ export const searchVinylDatabase = async (
  * cache key.
  */
 export const searchVinylReleaseGroups = async (
-  query: string,
+  queryOrRequest: string | ReleaseGroupSearchRequest,
   page = 1,
   pageSize = 8,
 ): Promise<SearchResultPage> => {
-  const cacheKey = `groups:${query.trim().toLowerCase()}:p${page}:s${pageSize}`;
+  const request: ReleaseGroupSearchRequest =
+    typeof queryOrRequest === 'string'
+      ? { query: queryOrRequest, page, pageSize }
+      : {
+          ...queryOrRequest,
+          page: queryOrRequest.page ?? page,
+          pageSize: queryOrRequest.pageSize ?? pageSize,
+        };
+
+  const requestIdentity = {
+    query: request.query?.trim().toLowerCase() ?? '',
+    mode: request.mode ?? 'simple',
+    intent: {
+      title: request.intent?.title?.trim().toLowerCase() ?? '',
+      artist: request.intent?.artist?.trim().toLowerCase() ?? '',
+      year: request.intent?.year?.trim() ?? '',
+      label: request.intent?.label?.trim().toLowerCase() ?? '',
+      format: request.intent?.format?.trim().toLowerCase() ?? '',
+      country: request.intent?.country?.trim().toLowerCase() ?? '',
+    },
+    page: request.page,
+    pageSize: request.pageSize,
+  };
+
+  const cacheKey = `groups:${JSON.stringify(requestIdentity)}`;
   const cached = getCached<SearchResultPage>(cacheKey);
   if (cached) {
     return cached;
@@ -148,7 +184,7 @@ export const searchVinylReleaseGroups = async (
   const res = await fetch('/api/search/groups', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, page, pageSize }),
+    body: JSON.stringify(request),
   });
 
   if (!res.ok) {

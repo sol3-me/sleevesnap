@@ -52,6 +52,17 @@ export interface SearchResultPage {
   groups: SearchResultGroup[];
 }
 
+export interface SearchIntent {
+  artist?: string;
+  title?: string;
+  year?: string;
+  label?: string;
+  format?: string;
+  country?: string;
+}
+
+export type SearchMode = 'simple' | 'indexed';
+
 export interface SearchGroupReleases {
   releaseGroupId: string;
   availableFormats: string[];
