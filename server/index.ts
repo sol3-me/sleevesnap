@@ -55,7 +55,8 @@ app.get('/api/health', (_req, res) => {
 if (NODE_ENV === 'production') {
   const distPath = path.join(__dirname, '..', 'dist');
   app.use(express.static(distPath));
-  app.get('*', apiLimiter, (_req, res) => {
+  // Express 5/path-to-regexp rejects bare '*' routes; use middleware fallback instead.
+  app.use(apiLimiter, (_req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }
