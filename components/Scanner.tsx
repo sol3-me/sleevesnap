@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
-import { getReleaseGroupReleases, scanImage, searchVinylReleaseGroups, submitScan } from '../services/vinylService';
 import { logEvent, logWarn } from '../services/telemetry';
+import { getReleaseGroupReleases, scanImage, searchVinylReleaseGroups, submitScan } from '../services/vinylService';
 import { ScanVisionSuggestion, SearchGroupReleases, SearchResultGroup, VinylRecord } from '../types';
 
 type CaptureMethod = 'camera' | 'upload' | 'drag-drop' | 'paste';
@@ -393,9 +393,8 @@ export const Scanner: React.FC<ScannerProps> = ({
       {/* ── Chooser (capture stage, camera not yet open, nothing captured) ── */}
       {stage === 'capture' && !isStreaming && !capturedImage && (
         <div
-          className={`flex-1 flex flex-col items-center justify-center gap-6 p-6 rounded-3xl border-2 border-dashed transition-colors ${
-            isDraggingOver ? 'border-vinyl-accent bg-vinyl-accent/10' : 'border-white/10 bg-vinyl-900/60'
-          }`}
+          className={`flex-1 flex flex-col items-center justify-center gap-6 p-6 rounded-3xl border-2 border-dashed transition-colors ${isDraggingOver ? 'border-vinyl-accent bg-vinyl-accent/10' : 'border-white/10 bg-vinyl-900/60'
+            }`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
@@ -588,20 +587,20 @@ export const Scanner: React.FC<ScannerProps> = ({
                   .slice()
                   .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
                   .map((guess, idx) => {
-                  const query = `${guess.artist} ${guess.title}`;
-                  return (
-                    <button
-                      key={`${guess.artist}-${guess.title}-${idx}`}
-                      onClick={() => {
-                        setSearchQuery(query);
-                        void runGroupedSearch(query);
-                      }}
-                      className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 text-xs text-gray-200 hover:bg-white/10 transition-colors"
-                    >
-                      {`${guess.artist} - ${guess.title}`}
-                      <span className="text-gray-400 ml-1">{confidenceBand(guess.confidence)}</span>
-                    </button>
-                  );
+                    const query = `${guess.artist} ${guess.title}`;
+                    return (
+                      <button
+                        key={`${guess.artist}-${guess.title}-${idx}`}
+                        onClick={() => {
+                          setSearchQuery(query);
+                          void runGroupedSearch(query);
+                        }}
+                        className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 text-xs text-gray-200 hover:bg-white/10 transition-colors"
+                      >
+                        {`${guess.artist} - ${guess.title}`}
+                        <span className="text-gray-400 ml-1">{confidenceBand(guess.confidence)}</span>
+                      </button>
+                    );
                   })}
               </div>
               <p className="text-[11px] text-gray-500 mt-2">

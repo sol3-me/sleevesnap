@@ -50,29 +50,29 @@ Introduce an application-layer search port and provider adapter.
 ```ts
 // Application intent produced by UI and/or AI.
 export interface SearchIntent {
-  rawQuery?: string;
-  artist?: string;
-  title?: string;
-  year?: string;
-  label?: string;
-  format?: string;
-  country?: string;
-  releaseGroupId?: string;
+	rawQuery?: string;
+	artist?: string;
+	title?: string;
+	year?: string;
+	label?: string;
+	format?: string;
+	country?: string;
+	releaseGroupId?: string;
 }
 
-export type SearchMode = 'simple' | 'indexed';
+export type SearchMode = "simple" | "indexed";
 
 export interface GroupSearchOptions {
-  page: number;
-  pageSize: number;
-  includeFormats: boolean;
-  mode: SearchMode;
+	page: number;
+	pageSize: number;
+	includeFormats: boolean;
+	mode: SearchMode;
 }
 
 export interface CatalogSearchGateway {
-  searchReleaseGroups(intent: SearchIntent, options: GroupSearchOptions): Promise<SearchResultPage>;
-  getReleaseGroupReleases(releaseGroupId: string): Promise<SearchGroupReleases>;
-  searchReleases(intent: SearchIntent, limit: number, mode: SearchMode): Promise<SearchReleaseResult[]>;
+	searchReleaseGroups(intent: SearchIntent, options: GroupSearchOptions): Promise<SearchResultPage>;
+	getReleaseGroupReleases(releaseGroupId: string): Promise<SearchGroupReleases>;
+	searchReleases(intent: SearchIntent, limit: number, mode: SearchMode): Promise<SearchReleaseResult[]>;
 }
 ```
 
@@ -157,16 +157,16 @@ Add optional advanced payload:
 
 ```json
 {
-  "query": "songs for the deaf",
-  "mode": "indexed",
-  "intent": {
-    "artist": "Queens of the Stone Age",
-    "title": "Songs for the Deaf",
-    "year": "2002",
-    "label": "Interscope"
-  },
-  "page": 1,
-  "pageSize": 5
+	"query": "songs for the deaf",
+	"mode": "indexed",
+	"intent": {
+		"artist": "Queens of the Stone Age",
+		"title": "Songs for the Deaf",
+		"year": "2002",
+		"label": "Interscope"
+	},
+	"page": 1,
+	"pageSize": 5
 }
 ```
 
