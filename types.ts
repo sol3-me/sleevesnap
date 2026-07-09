@@ -67,10 +67,23 @@ export interface ScanResult {
   confidence: number;
 }
 
+export interface ScanVisionSuggestion {
+  artist: string;
+  title: string;
+  year?: string;
+  genre?: string;
+  confidence: number;
+}
+
+export interface ScanVisionMetadata {
+  guesses: ScanVisionSuggestion[];
+  suggestedQuery?: string;
+}
+
 /** Response from POST /api/scan */
 export type ScanResponse =
   | { matched: true; record: VinylRecord }
-  | { matched: false; suggestions?: VinylRecord[] };
+  | { matched: false; suggestions?: VinylRecord[]; vision?: ScanVisionMetadata };
 
 /** Payload for POST /api/scans (confirmed scan upload) */
 export interface ScanUploadPayload {

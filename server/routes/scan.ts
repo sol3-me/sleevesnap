@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db, incrementVisionCallCount } from '../db.js';
 import { computeHash, hammingDistance } from '../imageHash.js';
 import { logEvent, logWarn, newRequestId } from '../logger.js';
-import { identifyVinyl } from '../services/visionProvider/index.js';
+import { identifyVinyl, VisionScanResult } from '../services/visionProvider/index.js';
 import { searchReleasesByText } from './search.js';
 
 export const scanRouter = Router();
@@ -29,6 +29,14 @@ interface CollectionRow {
   date_added: number;
   notes: string | null;
   phash: string | null;
+}
+
+interface VisionSuggestionsResult {
+  suggestions: unknown[];
+  vision?: {
+    guesses: VisionScanResult[];
+    suggestedQuery?: string;
+  };
 }
 
 function rowToRecord(row: CollectionRow) {
@@ -139,15 +147,20 @@ scanRouter.post('/', async (req, res) => {
     threshold: MATCH_THRESHOLD,
   });
 
-  const suggestions = await getVisionSuggestions(imageBuffer, req.header('x-vision-admin-key'), requestId);
+  const visionResult = await getVisionSuggestions(imageBuffer, req.header('x-vision-admin-key'), requestId);
 
   logEvent('scan', requestId, 'Request complete', {
     matched: false,
-    suggestionCount: suggestions.length,
+    suggestionCount: visionResult.suggestions.length,
+    visionGuessCount: visionResult.vision?.guesses.length ?? 0,
     totalMs: Date.now() - startedAt,
   });
-  if (suggestions.length > 0) {
-    res.json({ matched: false, suggestions });
+  if (visionResult.suggestions.length > 0 || visionResult.vision) {
+    res.json({
+      matched: false,
+      suggestions: visionResult.suggestions.length > 0 ? visionResult.suggestions : undefined,
+      vision: visionResult.vision,
+    });
   } else {
     res.json({ matched: false });
   }
@@ -168,7 +181,7 @@ async function getVisionSuggestions(
   imageBuffer: Buffer,
   adminHeaderValue: string | undefined,
   requestId: string,
-) {
+): Promise<VisionSuggestionsResult> {
   const dateKey = new Date().toISOString().slice(0, 10);
   const adminKey = process.env.VISION_ADMIN_KEY;
   const isAdminBypass = Boolean(adminKey) && adminHeaderValue === adminKey;
@@ -180,7 +193,7 @@ async function getVisionSuggestions(
 
   if (!isAdminBypass && count > limit) {
     logEvent('scan', requestId, 'Vision call skipped — daily cap reached');
-    return [];
+    return { suggestions: [] };
   }
 
   try {
@@ -195,7 +208,7 @@ async function getVisionSuggestions(
     const [topGuess] = guesses;
     if (!topGuess) {
       logEvent('scan', requestId, 'No vision suggestion available — client will fall back to manual search');
-      return [];
+      return { suggestions: [] };
     }
 
     const appName = process.env.MUSICBRAINZ_APP_NAME ?? 'sleevesnap';
@@ -217,9 +230,15 @@ async function getVisionSuggestions(
       });
     }
 
-    return validated;
+    return {
+      suggestions: validated,
+      vision: {
+        guesses,
+        suggestedQuery: validationQuery,
+      },
+    };
   } catch (err) {
     logWarn('scan', requestId, 'Vision-assisted identification failed', { error: String(err) });
-    return [];
+    return { suggestions: [] };
   }
 }

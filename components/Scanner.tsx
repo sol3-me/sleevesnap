@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { scanImage, searchVinylDatabase, submitScan } from '../services/vinylService';
+import { getReleaseGroupReleases, scanImage, searchVinylReleaseGroups, submitScan } from '../services/vinylService';
 import { logEvent, logWarn } from '../services/telemetry';
-import { VinylRecord } from '../types';
+import { ScanVisionSuggestion, SearchGroupReleases, SearchResultGroup, VinylRecord } from '../types';
 
 type CaptureMethod = 'camera' | 'upload' | 'drag-drop' | 'paste';
 
@@ -61,8 +61,12 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   // search state
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<VinylRecord[]>([]);
+  const [searchGroups, setSearchGroups] = useState<SearchResultGroup[]>([]);
+  const [groupReleases, setGroupReleases] = useState<Record<string, SearchGroupReleases>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [loadingGroupIds, setLoadingGroupIds] = useState<Record<string, true>>({});
   const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
+  const [aiGuesses, setAiGuesses] = useState<ScanVisionSuggestion[]>([]);
 
   // ── Camera helpers ──────────────────────────────────────────────────────────
 
@@ -212,16 +216,33 @@ export const Scanner: React.FC<ScannerProps> = ({
         setMatchedRecord(result.record);
         setStage('match_found');
       } else if (result.suggestions?.length) {
+        const suggestedQuery = result.vision?.suggestedQuery
+          ?? `${result.suggestions[0]!.artist} ${result.suggestions[0]!.title}`;
         logEvent('scanner', 'AI-assisted suggestions returned', {
           count: result.suggestions.length,
           top: result.suggestions.slice(0, 3).map((r) => `${r.artist} - ${r.title}`),
+          suggestedQuery,
           ms,
         });
+        setAiGuesses(result.vision?.guesses ?? []);
         setFailedCovers({});
-        setSearchResults(result.suggestions);
-        setStage('search_results');
+        setSearchQuery(suggestedQuery);
+        await runGroupedSearch(suggestedQuery);
+      } else if (result.vision?.guesses?.length) {
+        const suggestedQuery = result.vision.suggestedQuery
+          ?? `${result.vision.guesses[0]!.artist} ${result.vision.guesses[0]!.title}`;
+        logEvent('scanner', 'Vision guess returned without validated suggestions', {
+          guessCount: result.vision.guesses.length,
+          topGuess: `${result.vision.guesses[0]!.artist} - ${result.vision.guesses[0]!.title}`,
+          suggestedQuery,
+          ms,
+        });
+        setAiGuesses(result.vision.guesses);
+        setSearchQuery(suggestedQuery);
+        await runGroupedSearch(suggestedQuery);
       } else {
         logEvent('scanner', 'No match and no suggestions — falling back to manual search', { ms });
+        setAiGuesses([]);
         setStage('no_match');
       }
     } catch (err) {
@@ -233,27 +254,39 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   // ── Manual search ───────────────────────────────────────────────────────────
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+  const runGroupedSearch = async (query: string) => {
     setError(null);
     setStage('searching');
     const startedAt = performance.now();
     try {
-      setFailedCovers({});
-      const results = await searchVinylDatabase(searchQuery);
-      logEvent('scanner', 'Manual search results', {
-        query: searchQuery,
-        resultCount: results.length,
-        top: results.slice(0, 3).map((r) => `${r.artist} - ${r.title}`),
+      const page = await searchVinylReleaseGroups(query, 1, 5);
+      logEvent('scanner', 'Grouped search results', {
+        query,
+        resultCount: page.groups.length,
+        total: page.total,
+        top: page.groups.slice(0, 3).map((g) => `${g.artist} - ${g.title}`),
         ms: Math.round(performance.now() - startedAt),
       });
-      setSearchResults(results);
+      setFailedCovers({});
+      setGroupReleases({});
+      setExpandedGroups({});
+      setLoadingGroupIds({});
+      setSearchGroups(page.groups);
       setStage('search_results');
     } catch (err) {
-      logWarn('scanner', 'Manual search failed', { query: searchQuery, error: err instanceof Error ? err.message : String(err) });
+      logWarn('scanner', 'Grouped search failed', {
+        query,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      setSearchGroups([]);
       setError('Search failed. Please try again.');
       setStage('no_match');
     }
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    await runGroupedSearch(searchQuery.trim());
   };
 
   // ── Confirm & save ──────────────────────────────────────────────────────────
@@ -304,10 +337,74 @@ export const Scanner: React.FC<ScannerProps> = ({
     setCapturedImage(null);
     setMatchedRecord(null);
     setSearchQuery('');
-    setSearchResults([]);
+    setSearchGroups([]);
+    setGroupReleases({});
+    setExpandedGroups({});
+    setLoadingGroupIds({});
     setFailedCovers({});
+    setAiGuesses([]);
     setError(null);
     setStage('capture');
+  };
+
+  const formatCountry = (countryCode?: string) => {
+    if (!countryCode) return undefined;
+    const specialRegions: Record<string, string> = {
+      XE: 'Europe',
+      XW: 'Worldwide',
+      XG: 'East Germany',
+    };
+
+    if (specialRegions[countryCode]) {
+      return `${specialRegions[countryCode]} (${countryCode})`;
+    }
+
+    try {
+      const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode);
+      if (name && name !== countryCode) {
+        return `${name} (${countryCode})`;
+      }
+    } catch {
+      // Ignore and fall through to the raw code.
+    }
+
+    return countryCode;
+  };
+
+  const coverFailureKey = (recordId: string, url: string) => `${recordId}::${url}`;
+
+  const getUsableCover = (recordId: string, urls: Array<string | undefined>) => {
+    return urls
+      .map((url) => url?.trim())
+      .filter((url): url is string => Boolean(url))
+      .find((url) => !failedCovers[coverFailureKey(recordId, url)]);
+  };
+
+  const markCoverFailed = (recordId: string, url: string) => {
+    setFailedCovers((prev) => ({ ...prev, [coverFailureKey(recordId, url)]: true }));
+  };
+
+  const toggleGroupExpanded = async (group: SearchResultGroup) => {
+    const groupId = group.releaseGroupId;
+    const currentlyOpen = Boolean(expandedGroups[groupId]);
+    const nextOpen = !currentlyOpen;
+
+    setExpandedGroups((prev) => ({ ...prev, [groupId]: nextOpen }));
+    if (!nextOpen || groupReleases[groupId] || loadingGroupIds[groupId]) {
+      return;
+    }
+
+    setLoadingGroupIds((prev) => ({ ...prev, [groupId]: true }));
+    try {
+      const details = await getReleaseGroupReleases(groupId);
+      setGroupReleases((prev) => ({ ...prev, [groupId]: details }));
+    } finally {
+      setLoadingGroupIds((prev) => {
+        const next = { ...prev };
+        delete next[groupId];
+        return next;
+      });
+    }
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -505,14 +602,41 @@ export const Scanner: React.FC<ScannerProps> = ({
             />
           )}
 
-          {searchResults.length > 0 ? (
+          {searchGroups.length > 0 ? (
             <p className="text-gray-300 text-sm">
-              Found a possible match below — confirm it, or search for something else.
+              We searched using the same MusicBrainz release-group flow as Discover. Expand a result to pick the exact release.
             </p>
           ) : (
             <p className="text-gray-300 text-sm">
               Couldn't identify this record in your collection. Do you know what album it is?
             </p>
+          )}
+
+          {aiGuesses.length > 0 && (
+            <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">AI suggestions</p>
+              <div className="flex flex-wrap gap-2">
+                {aiGuesses.slice(0, 4).map((guess, idx) => {
+                  const query = `${guess.artist} ${guess.title}`;
+                  return (
+                    <button
+                      key={`${guess.artist}-${guess.title}-${idx}`}
+                      onClick={() => {
+                        setSearchQuery(query);
+                        void runGroupedSearch(query);
+                      }}
+                      className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 text-xs text-gray-200 hover:bg-white/10 transition-colors"
+                    >
+                      {`${guess.artist} - ${guess.title}`}
+                      <span className="text-gray-400 ml-1">{`${Math.round((guess.confidence ?? 0) * 100)}%`}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-2">
+                AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
+              </p>
+            </div>
           )}
 
           {error && (
@@ -541,48 +665,106 @@ export const Scanner: React.FC<ScannerProps> = ({
 
           {/* Search results */}
           <div className="flex-1 overflow-y-auto space-y-2">
-            {searchResults.map((record) => (
+            {searchGroups.map((group) => {
+              const isExpanded = Boolean(expandedGroups[group.releaseGroupId]);
+              const isLoading = Boolean(loadingGroupIds[group.releaseGroupId]);
+              const details = groupReleases[group.releaseGroupId];
+              const releases = details?.releases ?? [];
+              const groupCover = getUsableCover(`group-${group.releaseGroupId}`, [group.thumbnailUrl]);
+              return (
               <div
-                key={record.id}
-                className="flex items-center gap-3 bg-vinyl-900/70 rounded-xl p-3 border border-white/5"
+                key={group.releaseGroupId}
+                className="bg-vinyl-900/70 rounded-xl border border-white/5"
               >
-                <div className="w-12 h-12 rounded-lg flex-shrink-0 overflow-hidden bg-vinyl-700 border border-white/10">
-                  {record.coverUrl && !failedCovers[record.id] ? (
-                    <img
-                      src={record.coverUrl}
-                      alt={record.title}
-                      className="w-full h-full object-cover"
-                      onError={() =>
-                        setFailedCovers((prev) => ({
-                          ...prev,
-                          [record.id]: true,
-                        }))
-                      }
-                    />
-                  ) : (
-                    <div className="w-full h-full text-[10px] text-gray-300 flex flex-col items-center justify-center leading-tight">
-                      <span className="text-sm" aria-hidden="true">♪</span>
-                      <span>No art</span>
-                    </div>
-                  )}
+                <div className="p-3 flex items-center gap-3">
+                  <div className="w-14 h-14 rounded-lg flex-shrink-0 overflow-hidden bg-vinyl-700 border border-white/10">
+                    {groupCover ? (
+                      <img
+                        src={groupCover}
+                        alt={group.title}
+                        className="w-full h-full object-cover"
+                        onError={() => markCoverFailed(`group-${group.releaseGroupId}`, groupCover)}
+                      />
+                    ) : (
+                      <div className="w-full h-full text-[10px] text-gray-300 flex flex-col items-center justify-center leading-tight">
+                        <span className="text-sm" aria-hidden="true">♪</span>
+                        <span>No art</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-white truncate">{group.title}</p>
+                    <p className="text-sm text-gray-400 truncate">{group.artist}</p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {[group.firstReleaseDate?.slice(0, 4), `${group.totalReleases} release${group.totalReleases === 1 ? '' : 's'}`]
+                        .filter(Boolean)
+                        .join(' • ')}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void toggleGroupExpanded(group)}
+                    className="flex-shrink-0 text-xs font-semibold bg-white/5 border border-white/10 text-gray-200 px-3.5 py-2 rounded-full hover:bg-white/10 transition-colors"
+                  >
+                    {isExpanded ? 'Hide releases' : 'Show releases'}
+                  </button>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-bold text-white truncate">{record.title}</p>
-                  <p className="text-sm text-gray-400 truncate">{record.artist}</p>
-                  {record.year && <p className="text-xs text-gray-500">{record.year}</p>}
-                </div>
-                <button
-                  onClick={() => confirmSelection(record)}
-                  disabled={stage === 'saving'}
-                  className="flex-shrink-0 text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-2 rounded-full transition-colors disabled:opacity-50"
-                >
-                  {stage === 'saving' ? '…' : 'This is it'}
-                </button>
-              </div>
-            ))}
 
-            {stage === 'search_results' && searchResults.length === 0 && (
-              <p className="text-center text-gray-500 py-6">No results found. Try a different query.</p>
+                {isExpanded && (
+                  <div className="px-3 pb-3 border-t border-white/5 space-y-2">
+                    {isLoading && (
+                      <div className="text-xs text-gray-500 py-2">Loading release variants...</div>
+                    )}
+
+                    {!isLoading && releases.length === 0 && (
+                      <div className="text-xs text-gray-500 py-2">No release variants found for this group.</div>
+                    )}
+
+                    {releases.map((record) => {
+                      const releaseCover = getUsableCover(record.id, [record.coverUrl, group.thumbnailUrl]);
+                      const country = formatCountry(record.country);
+                      return (
+                        <div key={record.id} className="flex items-center gap-3 bg-vinyl-950/70 rounded-lg p-2.5 border border-white/5">
+                          <div className="w-11 h-11 rounded-md flex-shrink-0 overflow-hidden bg-vinyl-700 border border-white/10">
+                            {releaseCover ? (
+                              <img
+                                src={releaseCover}
+                                alt={record.title}
+                                className="w-full h-full object-cover"
+                                onError={() => markCoverFailed(record.id, releaseCover)}
+                              />
+                            ) : (
+                              <div className="w-full h-full text-[10px] text-gray-300 flex flex-col items-center justify-center leading-tight">
+                                <span className="text-sm" aria-hidden="true">♪</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-white text-sm truncate">{record.title}</p>
+                            <p className="text-xs text-gray-400 truncate">{record.artist}</p>
+                            <p className="text-[11px] text-gray-500 truncate">
+                              {[record.year, country, record.format, record.releaseStatus].filter(Boolean).join(' • ') || 'Metadata unavailable'}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => confirmSelection(record)}
+                            disabled={stage === 'saving'}
+                            className="flex-shrink-0 text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-2 rounded-full transition-colors disabled:opacity-50"
+                          >
+                            {stage === 'saving' ? '…' : 'Use this'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              );
+            })}
+
+            {stage === 'search_results' && searchGroups.length === 0 && (
+              <p className="text-center text-gray-500 py-6">
+                No Discover results found for this query. Try artist + album, or pick one of the AI suggestions above.
+              </p>
             )}
           </div>
 

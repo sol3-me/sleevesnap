@@ -159,6 +159,9 @@ test('POST /api/scan falls through to vision suggestions when no pHash match exi
     assert.equal(Array.isArray(res.json.suggestions), true);
     assert.equal(res.json.suggestions.length > 0, true);
     assert.equal(res.json.suggestions[0].artist, 'Queens of the Stone Age');
+    assert.equal(Array.isArray(res.json.vision?.guesses), true);
+    assert.equal(res.json.vision?.guesses[0]?.title, 'Rated R');
+    assert.equal(res.json.vision?.suggestedQuery, 'Queens of the Stone Age Rated R');
   } finally {
     await closeServer(server);
   }
@@ -221,6 +224,7 @@ test('POST /api/scan bypasses the daily cap when X-Vision-Admin-Key matches VISI
 
     assert.equal(res.json.matched, false);
     assert.equal(res.json.suggestions?.length > 0, true);
+    assert.equal(res.json.vision?.guesses?.length > 0, true);
   } finally {
     await closeServer(server);
   }

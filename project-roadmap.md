@@ -70,6 +70,12 @@ We will utilize a **Hybrid AI Vision approach** to avoid training custom ML mode
 3.  **Validation (MusicBrainz):**
     - Take the raw strings from the vision response (e.g., "Pink Floyd - Dark Side").
     - Query MusicBrainz API to get the canonical metadata (Year, Genre, MBID) and high-res cover art.
+  - Keep and surface the raw vision guesses (with confidence) even when validation has zero matches, so the user can still act on likely candidates.
+
+5.  **Scan-to-Discover Standardization:**
+  - The scan fallback UI should reuse the same release-group search model as Discover (same query semantics, same result grouping), with the captured photo shown alongside results.
+  - AI's role in this path is query-seeding and candidate hints, not a hidden final decision.
+  - Regression test fixture to preserve: AI guessed `Various Artists - Timeisnow (TIN035)` at high confidence from sleeve text, but the text was a label imprint rather than the album title. The system should preserve this guess as a hint while steering users toward validated release-group results.
 
 4.  **Optimizations:**
     - **Client-Side Compression:** Resize images to max 1024px width before sending to API to reduce latency.
@@ -84,6 +90,7 @@ We will utilize a **Hybrid AI Vision approach** to avoid training custom ML mode
   - Create a public `popular_records` collection in Firestore.
   - When a user scans a record, check if we have full metadata cached locally first (IndexedDB) or in the global "Popular" list to avoid hitting MusicBrainz.
 - **Optimistic UI:** Show the scanned result immediately while fetching the high-res cover art in the background.
+- **Scan History Cache (new):** Persist recent captured photos + derived results/queries per user session so users can reopen prior scans without re-uploading or re-calling vision APIs.
 
 ## 6. Testing Strategy
 
