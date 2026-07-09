@@ -418,18 +418,16 @@ export function DiscoverView() {
           <button
             type="button"
             onClick={() => setSearchMode('simple')}
-            className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-              searchMode === 'simple' ? 'bg-vinyl-accent text-white' : 'text-gray-300 hover:text-white'
-            }`}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${searchMode === 'simple' ? 'bg-vinyl-accent text-white' : 'text-gray-300 hover:text-white'
+              }`}
           >
             Simple Search
           </button>
           <button
             type="button"
             onClick={() => setSearchMode('advanced')}
-            className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
-              searchMode === 'advanced' ? 'bg-vinyl-accent text-white' : 'text-gray-300 hover:text-white'
-            }`}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${searchMode === 'advanced' ? 'bg-vinyl-accent text-white' : 'text-gray-300 hover:text-white'
+              }`}
           >
             Advanced Search
           </button>

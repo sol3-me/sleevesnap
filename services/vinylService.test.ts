@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { searchVinylReleaseGroups } from './vinylService.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

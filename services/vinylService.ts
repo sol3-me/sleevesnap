@@ -155,10 +155,10 @@ export const searchVinylReleaseGroups = async (
     typeof queryOrRequest === 'string'
       ? { query: queryOrRequest, page, pageSize }
       : {
-          ...queryOrRequest,
-          page: queryOrRequest.page ?? page,
-          pageSize: queryOrRequest.pageSize ?? pageSize,
-        };
+        ...queryOrRequest,
+        page: queryOrRequest.page ?? page,
+        pageSize: queryOrRequest.pageSize ?? pageSize,
+      };
 
   const requestIdentity = {
     query: request.query?.trim().toLowerCase() ?? '',
