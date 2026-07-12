@@ -70,6 +70,14 @@ export function RootLayout() {
           {/* Mobile Header */}
           <header className="md:hidden flex items-center px-4 py-3 bg-vinyl-950/80 backdrop-blur-xl sticky top-0 z-20 border-b border-white/5">
             <Logo />
+            <a
+              href="https://musicbrainz.org"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              powered by musicbrainz <span aria-label="heart">❤</span>
+            </a>
           </header>
 
           <Outlet />
@@ -77,16 +85,6 @@ export function RootLayout() {
           {/* Mobile Navigation Bar (Bottom Sticky) */}
           {!isScanRoute && (
             <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-vinyl-950/85 backdrop-blur-xl border-t border-white/5 pb-safe">
-              <div className="text-center text-[10px] text-gray-500 pt-2">
-                <a
-                  href="https://musicbrainz.org"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-gray-300 transition-colors"
-                >
-                  powered by musicbrainz <span aria-label="heart">❤</span>
-                </a>
-              </div>
               <div className="flex items-end justify-around px-4">
                 <Link to="/" className={mobileNavLinkClassName} activeProps={{ className: mobileNavLinkActiveClassName }} activeOptions={{ exact: true }}>
                   <Icons.Home />

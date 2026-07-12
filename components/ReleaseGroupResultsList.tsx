@@ -20,6 +20,7 @@ interface ReleaseGroupResultsListProps {
     emptyReleasesMessage?: string;
     compact?: boolean;
     showFormatBuckets?: boolean;
+    showReleaseCount?: boolean;
     onArtistNameClick?: (artistName: string) => void | Promise<void>;
     labelContext?: { id?: string; name: string };
     onLabelNameClick?: (labelName: string, labelId?: string) => void | Promise<void>;
@@ -66,6 +67,7 @@ export function ReleaseGroupResultsList({
     emptyReleasesMessage = 'No releases found for this group.',
     compact = false,
     showFormatBuckets = false,
+    showReleaseCount = true,
     onArtistNameClick,
     labelContext,
     onLabelNameClick,
@@ -130,7 +132,7 @@ export function ReleaseGroupResultsList({
                 const isExpanded = Boolean(expandedGroups[group.releaseGroupId]);
                 const loadingGroup = Boolean(loadingGroupIds[group.releaseGroupId]);
                 const releaseCount = group.totalReleases;
-                const canExpand = releaseCount > 1;
+                const canExpand = !showReleaseCount || releaseCount !== 1;
                 const discogsSearchUrl = `https://www.discogs.com/search/?q=${encodeURIComponent(
                     `${group.artist} ${group.title}`,
                 )}&type=master`;
@@ -208,7 +210,7 @@ export function ReleaseGroupResultsList({
                                     <p className="text-xs text-gray-500 mt-1.5 truncate">
                                         {[
                                             group.firstReleaseDate?.slice(0, 4),
-                                            `${releaseCount} release${releaseCount === 1 ? '' : 's'}`,
+                                            showReleaseCount ? `${releaseCount} release${releaseCount === 1 ? '' : 's'}` : undefined,
                                             group.availableFormats.length > 0 ? group.availableFormats.join(', ') : undefined,
                                         ]
                                             .filter(Boolean)

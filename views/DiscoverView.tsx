@@ -1,4 +1,4 @@
-import { Link, getRouteApi } from '@tanstack/react-router';
+import { getRouteApi } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { FilterDropdown } from '../components/FilterDropdown';
@@ -14,7 +14,7 @@ import {
   sortTypeBuckets,
   typeBucketForGroup,
 } from '../lib/filters';
-import { resolveArtistEntityByName, resolveLabelEntityByName } from '../lib/entityResolvers';
+import { resolveArtistEntityByName } from '../lib/entityResolvers';
 import { logEvent, logWarn } from '../services/telemetry';
 import {
   DiscoverSearchType,
@@ -113,17 +113,9 @@ export function DiscoverView() {
   const simpleTypeFromUrl = search.st ?? 'title';
   const isEntitySelectionType =
     isSimpleModeFromUrl && (simpleTypeFromUrl === 'artist' || simpleTypeFromUrl === 'label');
-  const selectedArtistId = search.aid?.trim();
-  const selectedArtistName = search.an?.trim();
-  const selectedLabelId = search.lid?.trim();
-  const selectedLabelName = search.ln?.trim();
-  const hasSelectedEntity =
-    isEntitySelectionType &&
-    (simpleTypeFromUrl === 'artist' ? Boolean(selectedArtistId) : Boolean(selectedLabelId));
   const shouldShowEntityPicker = Boolean(
     isEntitySelectionType &&
-    search.q?.trim() &&
-    !hasSelectedEntity,
+    search.q?.trim(),
   );
 
   const hasCommittedGroupSearch = Boolean(
@@ -131,9 +123,7 @@ export function DiscoverView() {
     (
       isSimpleModeFromUrl &&
       (
-        (simpleTypeFromUrl === 'title' && search.q) ||
-        (simpleTypeFromUrl === 'artist' && search.q && selectedArtistId) ||
-        (simpleTypeFromUrl === 'label' && search.q && selectedLabelId)
+        simpleTypeFromUrl === 'title' && search.q
       )
     ),
   );
@@ -161,33 +151,15 @@ export function DiscoverView() {
     if (!q) return undefined;
 
     const searchType = search.st ?? 'title';
-    if (searchType === 'artist') {
-      if (!selectedArtistId) return undefined;
-      return {
-        mode: 'indexed' as const,
-        intent: {
-          artist: selectedArtistName || q,
-          artistId: selectedArtistId,
-        },
-      };
-    }
-
-    if (searchType === 'label') {
-      if (!selectedLabelId) return undefined;
-      return {
-        mode: 'indexed' as const,
-        intent: {
-          label: selectedLabelName || q,
-          labelId: selectedLabelId,
-        },
-      };
+    if (searchType !== 'title') {
+      return undefined;
     }
 
     return {
       mode: 'indexed' as const,
       intent: { title: q },
     };
-  }, [search.m, search.q, search.st, search.title, search.artist, search.year, search.label, selectedArtistId, selectedArtistName, selectedLabelId, selectedLabelName]);
+  }, [search.m, search.q, search.st, search.title, search.artist, search.year, search.label]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -260,8 +232,6 @@ export function DiscoverView() {
       logWarn('discover', 'Search failed', {
         mode: search.m ?? 'simple',
         query: search.q,
-        artistId: selectedArtistId,
-        labelId: selectedLabelId,
         title: search.title,
         artist: search.artist,
         year: search.year,
@@ -273,7 +243,7 @@ export function DiscoverView() {
     } finally {
       setIsSearching(false);
     }
-  }, [getSearchRequestFromUrl, search.m, search.q, search.title, search.artist, search.year, search.label, selectedArtistId, selectedLabelId]);
+  }, [getSearchRequestFromUrl, search.m, search.q, search.title, search.artist, search.year, search.label]);
 
   useEffect(() => {
     if (!shouldShowEntityPicker) {
@@ -330,10 +300,6 @@ export function DiscoverView() {
       mode: search.m ?? 'simple',
       st: search.st ?? 'title',
       q: search.q ?? '',
-      aid: search.aid ?? '',
-      an: search.an ?? '',
-      lid: search.lid ?? '',
-      ln: search.ln ?? '',
       title: search.title ?? '',
       artist: search.artist ?? '',
       year: search.year ?? '',
@@ -345,7 +311,7 @@ export function DiscoverView() {
     const isNewQuery = previousQueryRef.current !== identity;
     previousQueryRef.current = identity;
     void runSearch(search.page ?? 1, isNewQuery);
-  }, [search.m, search.st, search.q, search.aid, search.an, search.lid, search.ln, search.title, search.artist, search.year, search.label, search.page, hasCommittedGroupSearch, runSearch]);
+  }, [search.m, search.st, search.q, search.title, search.artist, search.year, search.label, search.page, hasCommittedGroupSearch, runSearch]);
 
   const submitSearch = () => {
     if (searchMode === 'advanced') {
@@ -372,17 +338,11 @@ export function DiscoverView() {
 
     const trimmed = inputValue.trim();
     if (!trimmed) return;
-
-    const isEntityType = simpleSearchType === 'artist' || simpleSearchType === 'label';
     void navigate({
       search: {
         m: 'simple',
         st: simpleSearchType,
         q: trimmed,
-        aid: isEntityType ? undefined : search.aid,
-        an: isEntityType ? undefined : search.an,
-        lid: isEntityType ? undefined : search.lid,
-        ln: isEntityType ? undefined : search.ln,
         title: undefined,
         artist: undefined,
         year: undefined,
@@ -397,60 +357,26 @@ export function DiscoverView() {
   };
 
   const chooseArtistEntity = (entity: ArtistSearchEntity) => {
-    const q = search.q?.trim();
-    if (!q) return;
-
+    const name = entity.name.trim() || search.q?.trim() || 'Unknown Artist';
     void navigate({
+      to: '/artists/$artistId',
+      params: { artistId: entity.id },
       search: {
-        m: 'simple',
-        st: 'artist',
-        q,
-        aid: entity.id,
-        an: entity.name,
-        lid: undefined,
-        ln: undefined,
-        title: undefined,
-        artist: undefined,
-        year: undefined,
-        label: undefined,
+        name,
         page: 1,
       },
     });
   };
 
   const chooseLabelEntity = (entity: LabelSearchEntity) => {
-    const q = search.q?.trim();
-    if (!q) return;
-
+    const name = entity.name.trim() || search.q?.trim() || 'Unknown Label';
     void navigate({
+      to: '/labels/$labelId',
+      params: { labelId: entity.id },
       search: {
-        m: 'simple',
-        st: 'label',
-        q,
-        aid: undefined,
-        an: undefined,
-        lid: entity.id,
-        ln: entity.name,
-        title: undefined,
-        artist: undefined,
-        year: undefined,
-        label: undefined,
+        name,
         page: 1,
       },
-    });
-  };
-
-  const clearSelectedEntity = () => {
-    if (!isEntitySelectionType) return;
-    void navigate({
-      search: (prev) => ({
-        ...prev,
-        page: 1,
-        aid: undefined,
-        an: undefined,
-        lid: undefined,
-        ln: undefined,
-      }),
     });
   };
 
@@ -459,19 +385,6 @@ export function DiscoverView() {
     if (!trimmed) return;
 
     try {
-      if (
-        simpleTypeFromUrl === 'artist' &&
-        selectedArtistId &&
-        (!selectedArtistName || selectedArtistName.toLowerCase() === trimmed.toLowerCase())
-      ) {
-        await navigate({
-          to: '/artists/$artistId',
-          params: { artistId: selectedArtistId },
-          search: { name: selectedArtistName ?? trimmed, page: 1 },
-        });
-        return;
-      }
-
       const artist = await resolveArtistEntityByName(trimmed);
       if (!artist) {
         toast.error('Could not find a matching artist detail page.');
@@ -486,48 +399,7 @@ export function DiscoverView() {
     } catch {
       toast.error('Failed to open artist detail page. Please try again.');
     }
-  }, [navigate, selectedArtistId, selectedArtistName, simpleTypeFromUrl]);
-
-  const openLabelDetailFromCard = useCallback(async (labelName: string, labelId?: string) => {
-    const trimmed = labelName.trim();
-    if (!trimmed) return;
-
-    try {
-      if (labelId) {
-        await navigate({
-          to: '/labels/$labelId',
-          params: { labelId },
-          search: { name: trimmed, page: 1 },
-        });
-        return;
-      }
-
-      const label = await resolveLabelEntityByName(trimmed);
-      if (!label) {
-        toast.error('Could not find a matching label detail page.');
-        return;
-      }
-
-      await navigate({
-        to: '/labels/$labelId',
-        params: { labelId: label.id },
-        search: { name: label.name, page: 1 },
-      });
-    } catch {
-      toast.error('Failed to open label detail page. Please try again.');
-    }
   }, [navigate]);
-
-  const activeLabelContext = useMemo(() => {
-    if (simpleTypeFromUrl !== 'label' || !selectedLabelName) {
-      return undefined;
-    }
-
-    return {
-      id: selectedLabelId,
-      name: selectedLabelName,
-    };
-  }, [selectedLabelId, selectedLabelName, simpleTypeFromUrl]);
 
   const loadReleasesForGroup = useCallback(
     async (releaseGroupId: string, silent = false) => {
@@ -908,47 +780,6 @@ export function DiscoverView() {
         </div>
       </div>
 
-      {hasSelectedEntity && !shouldShowEntityPicker && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="text-xs text-gray-400">Locked to</span>
-          <span className="inline-flex items-center gap-2 rounded-full border border-vinyl-accent/50 bg-vinyl-accent/10 px-3 py-1 text-xs text-vinyl-accent-soft">
-            {simpleTypeFromUrl === 'artist' && selectedArtistId ? (
-              <Link
-                to="/artists/$artistId"
-                params={{ artistId: selectedArtistId }}
-                search={{ name: selectedArtistName ?? search.q ?? undefined, page: 1 }}
-                className="hover:text-white transition-colors underline"
-              >
-                {`Artist: ${selectedArtistName ?? search.q ?? 'Unknown'}`}
-              </Link>
-            ) : simpleTypeFromUrl === 'label' && selectedLabelId ? (
-              <Link
-                to="/labels/$labelId"
-                params={{ labelId: selectedLabelId }}
-                search={{ name: selectedLabelName ?? search.q ?? undefined, page: 1 }}
-                className="hover:text-white transition-colors underline"
-              >
-                {`Label: ${selectedLabelName ?? search.q ?? 'Unknown'}`}
-              </Link>
-            ) : (
-              <span>
-                {simpleTypeFromUrl === 'artist'
-                  ? `Artist: ${selectedArtistName ?? search.q ?? 'Unknown'}`
-                  : `Label: ${selectedLabelName ?? search.q ?? 'Unknown'}`}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={clearSelectedEntity}
-              className="text-vinyl-accent hover:text-white transition-colors"
-              aria-label="Clear selected entity"
-            >
-              ✕
-            </button>
-          </span>
-        </div>
-      )}
-
       {shouldShowEntityPicker && (
         <div className="mb-5 space-y-3">
           <div className="text-sm text-gray-400">
@@ -1058,14 +889,6 @@ export function DiscoverView() {
           onArtistNameClick={(artistName) => {
             void openArtistDetailFromCard(artistName);
           }}
-          labelContext={activeLabelContext}
-          onLabelNameClick={
-            activeLabelContext
-              ? (labelName, labelId) => {
-                void openLabelDetailFromCard(labelName, labelId);
-              }
-              : undefined
-          }
           emptyReleasesMessage="No releases in this group match the selected formats."
         />
       )}

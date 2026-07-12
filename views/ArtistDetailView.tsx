@@ -99,6 +99,7 @@ export function ArtistDetailView() {
         intent: {
           artistId,
           artist: artistName,
+          discographyBrowse: true,
           primaryTypes: tabConfig.includePrimaryTypes,
           excludePrimaryTypes: tabConfig.excludePrimaryTypes,
         },
@@ -402,6 +403,8 @@ export function ArtistDetailView() {
             groupReleases={groupReleases}
             expandedGroups={expandedGroups}
             loadingGroupIds={loadingGroupIds}
+            showReleaseCount={false}
+            showFormatBuckets
             onToggleGroup={(group) => {
               void toggleGroupExpanded(group.releaseGroupId);
             }}

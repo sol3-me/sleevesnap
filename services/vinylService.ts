@@ -181,6 +181,7 @@ export const searchVinylReleaseGroups = async (
       labelId: request.intent?.labelId?.trim().toLowerCase() ?? '',
       format: request.intent?.format?.trim().toLowerCase() ?? '',
       country: request.intent?.country?.trim().toLowerCase() ?? '',
+      discographyBrowse: request.intent?.discographyBrowse ?? false,
       primaryTypes: (request.intent?.primaryTypes ?? [])
         .map((value) => value.trim().toLowerCase())
         .filter((value) => value.length > 0),

@@ -33,6 +33,7 @@ export interface SearchResultGroup {
   title: string;
   artist: string;
   firstReleaseDate?: string;
+  secondaryTypes?: string[];
   releaseGroupUrl: string;
   thumbnailUrl?: string;
   availableFormats: string[];
@@ -63,6 +64,7 @@ export interface SearchIntent {
   country?: string;
   primaryTypes?: string[];
   excludePrimaryTypes?: string[];
+  discographyBrowse?: boolean;
 }
 
 export interface ArtistSearchEntity {

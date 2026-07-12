@@ -45,12 +45,19 @@ interface MusicBrainzReleaseGroupSearchResult {
     title: string;
     'first-release-date'?: string;
     'primary-type'?: string;
+    'secondary-types'?: string[];
     'artist-credit'?: MusicBrainzArtistCredit[];
 }
 
 interface MusicBrainzReleaseGroupSearchResponse {
     count?: number;
     offset?: number;
+    'release-groups'?: MusicBrainzReleaseGroupSearchResult[];
+}
+
+interface MusicBrainzReleaseGroupBrowseResponse {
+    'release-group-count'?: number;
+    'release-group-offset'?: number;
     'release-groups'?: MusicBrainzReleaseGroupSearchResult[];
 }
 
@@ -100,6 +107,7 @@ interface CandidateReleaseGroup {
     title: string;
     artist: string;
     firstReleaseDate?: string;
+    secondaryTypes?: string[];
     releaseGroupUrl: string;
     primaryType?: string;
 }
@@ -180,6 +188,7 @@ export interface SearchIntent {
     country?: string;
     primaryTypes?: string[];
     excludePrimaryTypes?: string[];
+    discographyBrowse?: boolean;
 }
 
 export type SearchMode = 'simple' | 'indexed';
@@ -232,9 +241,16 @@ export function createMusicBrainzCatalogGateway(appName: string): CatalogSearchG
                 Math.min(MAX_GROUP_PAGE_SIZE, Number(input.pageSize ?? DEFAULT_GROUP_PAGE_SIZE)),
             );
 
+            const useArtistDiscographyBrowse =
+                input.mode === 'indexed' &&
+                input.intent !== undefined &&
+                shouldUseArtistDiscographyBrowse(input.intent);
+
             const mode = input.mode ?? 'simple';
             const querySource =
-                mode === 'indexed' && input.intent
+                useArtistDiscographyBrowse
+                    ? buildArtistBrowseQueryDescription(input.intent!)
+                    : mode === 'indexed' && input.intent
                     ? buildIndexedReleaseGroupQuery(input.intent)
                     : normalizeSearchInput(input.query ?? '');
 
@@ -243,7 +259,9 @@ export function createMusicBrainzCatalogGateway(appName: string): CatalogSearchG
             }
 
             const discoverPage =
-                mode === 'indexed'
+                useArtistDiscographyBrowse
+                    ? await collectArtistBrowseDiscoverPage(input.intent!, appName, safePage, safePageSize)
+                    : mode === 'indexed'
                     ? await collectIndexedDiscoverPage(querySource, appName, safePage, safePageSize)
                     : await collectDiscoverPage(querySource, appName, safePage, safePageSize);
 
@@ -398,6 +416,66 @@ async function collectIndexedDiscoverPage(
     };
 }
 
+async function collectArtistBrowseDiscoverPage(
+    intent: SearchIntent,
+    appName: string,
+    page: number,
+    pageSize: number,
+): Promise<{ groups: EnrichedReleaseGroup[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
+    const artistId = intent.artistId?.trim();
+    if (!artistId) {
+        throw new Error('artistId is required for artist discography browse');
+    }
+
+    const primaryTypes = normalizePrimaryTypes(intent.primaryTypes);
+    const typeFilter = primaryTypes.length > 0 ? primaryTypes.join('|') : undefined;
+    const allCandidates = await fetchAllReleaseGroupCandidatesByArtistBrowse(artistId, typeFilter, appName);
+    const sortedCandidates = allCandidates.sort((a, b) => compareDiscographyCandidates(a, b));
+
+    const offset = (page - 1) * pageSize;
+    const pageCandidates = sortedCandidates.slice(offset, offset + pageSize);
+    const groups = await Promise.all(pageCandidates.map((candidate) => enrichCandidate(candidate, appName)));
+    const hasMore = offset + groups.length < sortedCandidates.length;
+
+    return {
+        groups,
+        total: sortedCandidates.length,
+        isTotalExact: true,
+        hasMore,
+    };
+}
+
+async function fetchAllReleaseGroupCandidatesByArtistBrowse(
+    artistId: string,
+    typeFilter: string | undefined,
+    appName: string,
+): Promise<CandidateReleaseGroup[]> {
+    const MAX_BROWSE_PAGE_SIZE = 100;
+    const gathered: MusicBrainzReleaseGroupSearchResult[] = [];
+    let offset = 0;
+    let total = 0;
+
+    do {
+        const response = await fetchReleaseGroupsByArtistBrowse(
+            artistId,
+            appName,
+            MAX_BROWSE_PAGE_SIZE,
+            offset,
+            typeFilter,
+        );
+        const groups = response['release-groups'] ?? [];
+        total = response['release-group-count'] ?? groups.length;
+        gathered.push(...groups);
+        offset += groups.length;
+
+        if (groups.length === 0) {
+            break;
+        }
+    } while (offset < total);
+
+    return gathered.map(mapReleaseGroupCandidate);
+}
+
 function isRetryableStatus(status: number): boolean {
     return status === 429 || status === 502 || status === 503 || status === 504;
 }
@@ -498,6 +576,34 @@ async function fetchReleaseGroupsByQuery(
     return (await res.json()) as MusicBrainzReleaseGroupSearchResponse;
 }
 
+async function fetchReleaseGroupsByArtistBrowse(
+    artistId: string,
+    appName: string,
+    limit: number,
+    offset: number,
+    typeFilter?: string,
+): Promise<MusicBrainzReleaseGroupBrowseResponse> {
+    const url = new URL('https://musicbrainz.org/ws/2/release-group');
+    url.searchParams.set('artist', artistId);
+    url.searchParams.set('fmt', 'json');
+    url.searchParams.set('limit', String(limit));
+    url.searchParams.set('offset', String(offset));
+    url.searchParams.set('inc', 'artist-credits');
+    url.searchParams.set('release-group-status', 'website-default');
+
+    if (typeFilter) {
+        url.searchParams.set('type', typeFilter);
+    }
+
+    const res = await fetchMusicBrainz(url.toString(), appName);
+
+    if (!res.ok) {
+        throw new Error(`MusicBrainz release-group browse failed (${res.status})`);
+    }
+
+    return (await res.json()) as MusicBrainzReleaseGroupBrowseResponse;
+}
+
 async function fetchArtistsByQuery(
     query: string,
     appName: string,
@@ -546,6 +652,7 @@ function mapReleaseGroupCandidate(rg: MusicBrainzReleaseGroupSearchResult): Cand
         title: rg.title,
         artist: getArtistName(rg['artist-credit']),
         firstReleaseDate: rg['first-release-date'],
+        secondaryTypes: rg['secondary-types'],
         releaseGroupUrl: `https://musicbrainz.org/release-group/${rg.id}`,
         primaryType: rg['primary-type'],
     };
@@ -755,17 +862,76 @@ function buildFallbackSearchQuery(normalizedInput: string): string {
     return `(releasegroup:(${allTerms}) OR release:(${allTerms}) OR artist:(${allTerms}))`;
 }
 
+function normalizePrimaryTypes(values: string[] | undefined): string[] {
+    return (values ?? [])
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0);
+}
+
+function shouldUseArtistDiscographyBrowse(intent: SearchIntent): boolean {
+    if (!intent.discographyBrowse) return false;
+    if (!intent.artistId?.trim()) return false;
+    if (intent.title?.trim()) return false;
+    if (intent.year?.trim()) return false;
+    if (intent.label?.trim()) return false;
+    if (intent.labelId?.trim()) return false;
+    if (intent.country?.trim()) return false;
+    if (intent.format?.trim()) return false;
+
+    const includeTypes = normalizePrimaryTypes(intent.primaryTypes);
+    const excludeTypes = normalizePrimaryTypes(intent.excludePrimaryTypes);
+    return includeTypes.length > 0 && excludeTypes.length === 0;
+}
+
+function buildArtistBrowseQueryDescription(intent: SearchIntent): string {
+    const artistId = intent.artistId?.trim() ?? '';
+    const includeTypes = normalizePrimaryTypes(intent.primaryTypes);
+    const typePart = includeTypes.length > 0 ? includeTypes.join('|') : 'all';
+    return `artist:${artistId} type:${typePart} release-group-status:website-default`;
+}
+
+function compareDiscographyCandidates(a: CandidateReleaseGroup, b: CandidateReleaseGroup): number {
+    const primaryTypeOrder = (value: string | undefined): number => {
+        const normalized = value?.trim().toLowerCase() ?? '';
+        if (normalized === 'album') return 0;
+        if (normalized === 'single') return 1;
+        if (normalized === 'ep') return 2;
+        return 3;
+    };
+
+    const secondaryWeight = (values: string[] | undefined): number => {
+        if (!values || values.length === 0) return 0;
+        const normalized = values.map((value) => value.trim().toLowerCase());
+        if (normalized.some((value) => value === 'compilation')) return 2;
+        if (normalized.some((value) => value === 'live')) return 3;
+        return 1;
+    };
+
+    const parseYear = (value: string | undefined): number => {
+        if (!value) return Number.MAX_SAFE_INTEGER;
+        const parsed = Number(value.slice(0, 4));
+        return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+    };
+
+    const primaryDiff = primaryTypeOrder(a.primaryType) - primaryTypeOrder(b.primaryType);
+    if (primaryDiff !== 0) return primaryDiff;
+
+    const secondaryDiff = secondaryWeight(a.secondaryTypes) - secondaryWeight(b.secondaryTypes);
+    if (secondaryDiff !== 0) return secondaryDiff;
+
+    const yearDiff = parseYear(a.firstReleaseDate) - parseYear(b.firstReleaseDate);
+    if (yearDiff !== 0) return yearDiff;
+
+    return a.title.localeCompare(b.title, 'en', { sensitivity: 'base' });
+}
+
 function buildIndexedReleaseGroupQuery(intent: SearchIntent): string {
     const clauses: string[] = [];
     const normalizedArtistId = intent.artistId?.trim();
     const normalizedLabelId = intent.labelId?.trim();
     const normalizedLabel = intent.label?.trim();
-    const includePrimaryTypes = (intent.primaryTypes ?? [])
-        .map((value) => value.trim().toLowerCase())
-        .filter((value) => value.length > 0);
-    const excludePrimaryTypes = (intent.excludePrimaryTypes ?? [])
-        .map((value) => value.trim().toLowerCase())
-        .filter((value) => value.length > 0);
+    const includePrimaryTypes = normalizePrimaryTypes(intent.primaryTypes);
+    const excludePrimaryTypes = normalizePrimaryTypes(intent.excludePrimaryTypes);
 
     if (normalizedArtistId) {
         clauses.push(`arid:${escapeLuceneTerm(normalizedArtistId)}`);

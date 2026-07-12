@@ -423,6 +423,7 @@ export function LabelDetailView() {
             groupReleases={groupReleases}
             expandedGroups={expandedGroups}
             loadingGroupIds={loadingGroupIds}
+            showReleaseCount={false}
             onToggleGroup={(group) => {
               void toggleGroupExpanded(group.releaseGroupId);
             }}
