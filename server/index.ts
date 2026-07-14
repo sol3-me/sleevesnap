@@ -9,6 +9,7 @@ import { scanRouter } from './routes/scan.js';
 import { searchRouter } from './routes/search.js';
 import { createCoversRouter } from './routes/covers.js';
 import { createScansRouter } from './routes/scans.js';
+import { createScanHistoryRouter } from './routes/scanHistory.js';
 import { createStorageProvider } from './storage/index.js';
 import { apiLimiter, scanLimiter } from './rateLimiters.js';
 
@@ -43,6 +44,7 @@ app.use('/covers', apiLimiter, express.static(coversPath));
 app.use('/api/collection', apiLimiter, collectionRouter);
 app.use('/api/scan', scanLimiter, scanRouter);
 app.use('/api/scans', apiLimiter, createScansRouter(storage));
+app.use('/api/scan-history', apiLimiter, createScanHistoryRouter(storage));
 app.use('/api/search', apiLimiter, searchRouter);
 app.use('/api/covers', apiLimiter, createCoversRouter(storage));
 

@@ -1,8 +1,41 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AdvancedSearchFields, AdvancedSearchFieldsValue } from '../components/AdvancedSearchFields';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
+import { triggerImageDownload } from '../lib/downloadImage';
 import { logEvent, logWarn } from '../services/telemetry';
-import { getReleaseGroupReleases, scanImage, searchVinylReleaseGroups, submitScan } from '../services/vinylService';
-import { ScanVisionSuggestion, SearchGroupReleases, SearchResultGroup, VinylRecord } from '../types';
+import {
+  appendScanHistorySearch,
+  createScanHistoryEntry,
+  deleteScanHistoryEntry,
+  getReleaseGroupReleases,
+  listScanHistory,
+  scanImage,
+  searchVinylReleaseGroups,
+  submitScan,
+} from '../services/vinylService';
+import {
+  ScanHistoryEntry,
+  ScanVisionSuggestion,
+  SearchGroupReleases,
+  SearchIntent,
+  SearchResultGroup,
+  VinylRecord,
+} from '../types';
+
+const emptySearchFields: AdvancedSearchFieldsValue = { title: '', artist: '', year: '', label: '' };
+
+function intentFromFields(fields: AdvancedSearchFieldsValue): SearchIntent {
+  return {
+    title: fields.title.trim() || undefined,
+    artist: fields.artist.trim() || undefined,
+    year: fields.year.trim() || undefined,
+    label: fields.label.trim() || undefined,
+  };
+}
+
+function hasAnyIntentField(fields: AdvancedSearchFieldsValue): boolean {
+  return Boolean(fields.title.trim() || fields.artist.trim() || fields.year.trim() || fields.label.trim());
+}
 
 type CaptureMethod = 'camera' | 'upload' | 'drag-drop' | 'paste';
 
@@ -28,6 +61,14 @@ const UploadIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
 );
 
+const DownloadIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+);
+
+const TrashIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+);
+
 /** Fraction of the shorter viewfinder dimension the square capture frame occupies. */
 const FRAME_RATIO = 0.82;
 
@@ -38,7 +79,8 @@ type Stage =
   | 'no_match'          // no match; show manual search box
   | 'searching'         // waiting for /api/search response
   | 'search_results'    // search results ready; user picks one
-  | 'saving';           // saving confirmed result to collection
+  | 'saving'            // saving confirmed result to collection
+  | 'history';          // browsing past AI-assisted scans
 
 export const Scanner: React.FC<ScannerProps> = ({
   onScanComplete,
@@ -77,12 +119,22 @@ export const Scanner: React.FC<ScannerProps> = ({
   const [matchedRecord, setMatchedRecord] = useState<VinylRecord | null>(null);
 
   // search state
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFields, setSearchFields] = useState<AdvancedSearchFieldsValue>(emptySearchFields);
   const [searchGroups, setSearchGroups] = useState<SearchResultGroup[]>([]);
   const [groupReleases, setGroupReleases] = useState<Record<string, SearchGroupReleases>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [loadingGroupIds, setLoadingGroupIds] = useState<Record<string, true>>({});
   const [aiGuesses, setAiGuesses] = useState<ScanVisionSuggestion[]>([]);
+
+  // scan history state — synchronous ref alongside the state so a freshly
+  // created entry's id is available immediately to the search that follows
+  // it in the same call chain, without waiting on a state update to flush.
+  const scanHistoryIdRef = useRef<string | null>(null);
+  const [resumedImageUrl, setResumedImageUrl] = useState<string | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<ScanHistoryEntry[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  const displayImageSrc = capturedImage ? `data:image/jpeg;base64,${capturedImage}` : resumedImageUrl;
 
   // ── Camera helpers ──────────────────────────────────────────────────────────
 
@@ -265,6 +317,29 @@ export const Scanner: React.FC<ScannerProps> = ({
     analyzeImage(base64);
   };
 
+  // ── Scan history (persists AI-assisted scans so they can be revisited
+  //    without spending more vision-API budget) ───────────────────────────────
+
+  /** Best-effort — a failure here shouldn't block the live scan flow. */
+  const persistScanHistory = async (
+    base64Image: string,
+    visionGuesses: ScanVisionSuggestion[],
+    suggestedQuery: string | undefined,
+    initialSuggestions: VinylRecord[],
+  ) => {
+    try {
+      const entry = await createScanHistoryEntry({
+        capturedImage: base64Image,
+        visionGuesses,
+        suggestedQuery,
+        initialSuggestions,
+      });
+      scanHistoryIdRef.current = entry.id;
+    } catch (err) {
+      logWarn('scanner', 'Failed to save scan history entry', { error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
   // ── Scan (pHash matching) ───────────────────────────────────────────────────
 
   const analyzeImage = async (base64: string) => {
@@ -283,29 +358,31 @@ export const Scanner: React.FC<ScannerProps> = ({
         setMatchedRecord(result.record);
         setStage('match_found');
       } else if (result.suggestions?.length) {
-        const suggestedQuery = result.vision?.suggestedQuery
-          ?? `${result.suggestions[0]!.artist} ${result.suggestions[0]!.title}`;
+        const top = result.suggestions[0]!;
+        const fields: AdvancedSearchFieldsValue = { title: top.title, artist: top.artist, year: top.year ?? '', label: '' };
         logEvent('scanner', 'AI-assisted suggestions returned', {
           count: result.suggestions.length,
           top: result.suggestions.slice(0, 3).map((r) => `${r.artist} - ${r.title}`),
-          suggestedQuery,
+          suggestedQuery: result.vision?.suggestedQuery,
           ms,
         });
         setAiGuesses(result.vision?.guesses ?? []);
-        setSearchQuery(suggestedQuery);
-        await runGroupedSearch(suggestedQuery);
+        setSearchFields(fields);
+        await persistScanHistory(base64, result.vision?.guesses ?? [], result.vision?.suggestedQuery, result.suggestions);
+        await runGroupedSearch(intentFromFields(fields));
       } else if (result.vision?.guesses?.length) {
-        const suggestedQuery = result.vision.suggestedQuery
-          ?? `${result.vision.guesses[0]!.artist} ${result.vision.guesses[0]!.title}`;
+        const top = result.vision.guesses[0]!;
+        const fields: AdvancedSearchFieldsValue = { title: top.title, artist: top.artist, year: top.year ?? '', label: '' };
         logEvent('scanner', 'Vision guess returned without validated suggestions', {
           guessCount: result.vision.guesses.length,
-          topGuess: `${result.vision.guesses[0]!.artist} - ${result.vision.guesses[0]!.title}`,
-          suggestedQuery,
+          topGuess: `${top.artist} - ${top.title}`,
+          suggestedQuery: result.vision.suggestedQuery,
           ms,
         });
         setAiGuesses(result.vision.guesses);
-        setSearchQuery(suggestedQuery);
-        await runGroupedSearch(suggestedQuery);
+        setSearchFields(fields);
+        await persistScanHistory(base64, result.vision.guesses, result.vision.suggestedQuery, []);
+        await runGroupedSearch(intentFromFields(fields));
       } else {
         logEvent('scanner', 'No match and no suggestions — falling back to manual search', { ms });
         setAiGuesses([]);
@@ -320,14 +397,14 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   // ── Manual search ───────────────────────────────────────────────────────────
 
-  const runGroupedSearch = async (query: string) => {
+  const runGroupedSearch = async (intent: SearchIntent) => {
     setError(null);
     setStage('searching');
     const startedAt = performance.now();
     try {
-      const page = await searchVinylReleaseGroups(query, 1, 5);
+      const page = await searchVinylReleaseGroups({ mode: 'indexed', intent, page: 1, pageSize: 5 });
       logEvent('scanner', 'Grouped search results', {
-        query,
+        intent,
         resultCount: page.groups.length,
         total: page.total,
         top: page.groups.slice(0, 3).map((g) => `${g.artist} - ${g.title}`),
@@ -338,9 +415,16 @@ export const Scanner: React.FC<ScannerProps> = ({
       setLoadingGroupIds({});
       setSearchGroups(page.groups);
       setStage('search_results');
+
+      // Best-effort — a failure here shouldn't block showing the results just fetched.
+      if (scanHistoryIdRef.current) {
+        appendScanHistorySearch(scanHistoryIdRef.current, intent, page.groups).catch((err) => {
+          logWarn('scanner', 'Failed to append search to scan history', { error: err instanceof Error ? err.message : String(err) });
+        });
+      }
     } catch (err) {
       logWarn('scanner', 'Grouped search failed', {
-        query,
+        intent,
         error: err instanceof Error ? err.message : String(err),
       });
       setSearchGroups([]);
@@ -350,8 +434,13 @@ export const Scanner: React.FC<ScannerProps> = ({
   };
 
   const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
-    await runGroupedSearch(searchQuery.trim());
+    if (!hasAnyIntentField(searchFields)) return;
+    await runGroupedSearch(intentFromFields(searchFields));
+  };
+
+  const downloadCapturedImage = () => {
+    if (!capturedImage) return;
+    triggerImageDownload(capturedImage, `sleevesnap-scan-${Date.now()}.jpg`);
   };
 
   // ── Confirm & save ──────────────────────────────────────────────────────────
@@ -400,8 +489,10 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   const reset = () => {
     setCapturedImage(null);
+    setResumedImageUrl(null);
+    scanHistoryIdRef.current = null;
     setMatchedRecord(null);
-    setSearchQuery('');
+    setSearchFields(emptySearchFields);
     setSearchGroups([]);
     setGroupReleases({});
     setExpandedGroups({});
@@ -409,6 +500,67 @@ export const Scanner: React.FC<ScannerProps> = ({
     setAiGuesses([]);
     setError(null);
     setStage('capture');
+  };
+
+  // ── History (browse / resume / delete past AI-assisted scans) ──────────────
+
+  const openHistory = async () => {
+    setError(null);
+    setStage('history');
+    setIsLoadingHistory(true);
+    try {
+      const entries = await listScanHistory();
+      setHistoryEntries(entries);
+    } catch (err) {
+      logWarn('scanner', 'Failed to load scan history', { error: err instanceof Error ? err.message : String(err) });
+      setError('Failed to load scan history.');
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  const resumeHistoryEntry = (entry: ScanHistoryEntry) => {
+    setError(null);
+    setCapturedImage(null);
+    setResumedImageUrl(entry.imageUrl);
+    setMatchedRecord(null);
+    scanHistoryIdRef.current = entry.id;
+    setAiGuesses(entry.visionGuesses);
+
+    const lastSearch = entry.searches[entry.searches.length - 1];
+    setGroupReleases({});
+    setExpandedGroups({});
+    setLoadingGroupIds({});
+
+    if (lastSearch) {
+      setSearchFields({
+        title: lastSearch.intent.title ?? '',
+        artist: lastSearch.intent.artist ?? '',
+        year: lastSearch.intent.year ?? '',
+        label: lastSearch.intent.label ?? '',
+      });
+      setSearchGroups(lastSearch.resultGroups);
+      setStage('search_results');
+    } else {
+      const topGuess = entry.visionGuesses[0];
+      setSearchFields(
+        topGuess
+          ? { title: topGuess.title, artist: topGuess.artist, year: topGuess.year ?? '', label: '' }
+          : emptySearchFields,
+      );
+      setSearchGroups([]);
+      setStage('no_match');
+    }
+  };
+
+  const deleteHistoryEntry = async (id: string) => {
+    try {
+      await deleteScanHistoryEntry(id);
+      setHistoryEntries((prev) => prev.filter((entry) => entry.id !== id));
+    } catch (err) {
+      logWarn('scanner', 'Failed to delete scan history entry', { error: err instanceof Error ? err.message : String(err) });
+      setError('Failed to delete scan history entry.');
+    }
   };
 
   const toggleGroupExpanded = async (group: SearchResultGroup) => {
@@ -507,6 +659,13 @@ export const Scanner: React.FC<ScannerProps> = ({
               Drag and drop an image here, or paste (Ctrl/Cmd+V) a screenshot from anywhere on the site.
             </p>
           )}
+
+          <button
+            onClick={() => void openHistory()}
+            className="text-sm text-gray-500 hover:text-gray-300 underline underline-offset-2"
+          >
+            View past scans
+          </button>
 
           <input
             type="file"
@@ -655,11 +814,20 @@ export const Scanner: React.FC<ScannerProps> = ({
           </div>
 
           {capturedImage && (
-            <img
-              src={`data:image/jpeg;base64,${capturedImage}`}
-              alt="Captured sleeve"
-              className="w-40 h-40 mx-auto object-contain rounded-xl bg-vinyl-900"
-            />
+            <div className="relative w-40 mx-auto">
+              <img
+                src={`data:image/jpeg;base64,${capturedImage}`}
+                alt="Captured sleeve"
+                className="w-40 h-40 object-contain rounded-xl bg-vinyl-900"
+              />
+              <button
+                onClick={downloadCapturedImage}
+                aria-label="Download photo"
+                className="absolute top-1.5 right-1.5 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
+              >
+                <DownloadIcon />
+              </button>
+            </div>
           )}
 
           {error && (
@@ -686,13 +854,24 @@ export const Scanner: React.FC<ScannerProps> = ({
       {/* ── No match / manual search ── */}
       {(stage === 'no_match' || stage === 'searching' || stage === 'search_results') && (
         <div className="flex-1 flex flex-col gap-4 overflow-hidden">
-          {/* Thumbnail of the captured image */}
-          {capturedImage && (
-            <img
-              src={`data:image/jpeg;base64,${capturedImage}`}
-              alt="Captured sleeve"
-              className="w-28 h-28 mx-auto object-contain rounded-xl bg-vinyl-900"
-            />
+          {/* Thumbnail of the captured (or resumed history) image */}
+          {displayImageSrc && (
+            <div className="relative w-28 mx-auto">
+              <img
+                src={displayImageSrc}
+                alt="Captured sleeve"
+                className="w-28 h-28 object-contain rounded-xl bg-vinyl-900"
+              />
+              {capturedImage && (
+                <button
+                  onClick={downloadCapturedImage}
+                  aria-label="Download photo"
+                  className="absolute top-1 right-1 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
+                >
+                  <DownloadIcon />
+                </button>
+              )}
+            </div>
           )}
 
           {searchGroups.length > 0 ? (
@@ -713,13 +892,18 @@ export const Scanner: React.FC<ScannerProps> = ({
                   .slice()
                   .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
                   .map((guess, idx) => {
-                    const query = `${guess.artist} ${guess.title}`;
+                    const fields: AdvancedSearchFieldsValue = {
+                      title: guess.title,
+                      artist: guess.artist,
+                      year: guess.year ?? '',
+                      label: '',
+                    };
                     return (
                       <button
                         key={`${guess.artist}-${guess.title}-${idx}`}
                         onClick={() => {
-                          setSearchQuery(query);
-                          void runGroupedSearch(query);
+                          setSearchFields(fields);
+                          void runGroupedSearch(intentFromFields(fields));
                         }}
                         className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 text-xs text-gray-200 hover:bg-white/10 transition-colors"
                       >
@@ -739,21 +923,13 @@ export const Scanner: React.FC<ScannerProps> = ({
             <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>
           )}
 
-          {/* Search box */}
-          <div className="flex gap-2">
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              placeholder="Search artist or album title…"
-              className="flex-1 bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
-              autoFocus
-            />
+          {/* Search fields */}
+          <div className="flex flex-col gap-2">
+            <AdvancedSearchFields value={searchFields} onChange={setSearchFields} onSubmit={handleSearch} />
             <button
               onClick={handleSearch}
-              disabled={stage === 'searching' || !searchQuery.trim()}
-              className="bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-4 rounded-xl font-semibold text-sm disabled:opacity-50 transition-colors"
+              disabled={stage === 'searching' || !hasAnyIntentField(searchFields)}
+              className="bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-4 py-3 rounded-xl font-semibold text-sm disabled:opacity-50 transition-colors"
             >
               {stage === 'searching' ? '…' : 'Search'}
             </button>
@@ -791,6 +967,67 @@ export const Scanner: React.FC<ScannerProps> = ({
           <button onClick={reset} className="mt-2 text-sm text-gray-500 hover:text-gray-300 text-center">
             ← Scan again
           </button>
+        </div>
+      )}
+
+      {/* ── Scan history (past AI-assisted scans) ── */}
+      {stage === 'history' && (
+        <div className="flex-1 flex flex-col gap-3 overflow-hidden">
+          <button
+            onClick={() => setStage('capture')}
+            className="self-start text-sm text-gray-400 hover:text-white"
+          >
+            ← Back
+          </button>
+
+          {error && (
+            <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>
+          )}
+
+          {isLoadingHistory ? (
+            <p className="text-gray-500 text-sm text-center py-6">Loading…</p>
+          ) : historyEntries.length === 0 ? (
+            <p className="text-gray-500 text-sm text-center py-6">No past scans yet.</p>
+          ) : (
+            <div className="flex-1 overflow-y-auto space-y-2">
+              {historyEntries.map((entry) => {
+                const topGuess = entry.visionGuesses[0];
+                const label = topGuess
+                  ? `${topGuess.artist} - ${topGuess.title}`
+                  : entry.suggestedQuery ?? 'Unidentified scan';
+                return (
+                  <div
+                    key={entry.id}
+                    className="flex items-center gap-3 bg-vinyl-900/70 border border-white/5 rounded-xl p-2"
+                  >
+                    <button
+                      onClick={() => resumeHistoryEntry(entry)}
+                      className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                    >
+                      {entry.imageUrl && (
+                        <img
+                          src={entry.imageUrl}
+                          alt=""
+                          className="w-12 h-12 object-contain rounded-lg bg-vinyl-950 shrink-0"
+                        />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-sm text-white truncate">{label}</p>
+                        <p className="text-xs text-gray-500">{new Date(entry.createdAt).toLocaleString()}</p>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => void deleteHistoryEntry(entry.id)}
+                      aria-label="Delete scan"
+                      className="p-2 rounded-full text-gray-400 hover:text-red-400 hover:bg-white/5 transition-colors"
+                    >
+                      <TrashIcon />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

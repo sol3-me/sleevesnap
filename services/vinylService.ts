@@ -1,12 +1,15 @@
 import {
   ArtistSearchEntity,
   LabelSearchEntity,
+  ScanHistoryCreatePayload,
+  ScanHistoryEntry,
   ScanResponse,
   ScanUploadPayload,
   SearchEntityPage,
   SearchGroupReleases,
   SearchIntent,
   SearchMode,
+  SearchResultGroup,
   SearchResultPage,
   VinylRecord,
 } from '../types';
@@ -330,6 +333,72 @@ export const searchLabelEntities = async (
   }
 
   return result;
+};
+
+/**
+ * Persists a fresh AI-assisted scan (captured photo + raw vision guesses) so
+ * it can be revisited later without spending more vision-API budget.
+ */
+export const createScanHistoryEntry = async (payload: ScanHistoryCreatePayload): Promise<ScanHistoryEntry> => {
+  const res = await fetch('/api/scan-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? 'Failed to save scan history.');
+  }
+
+  return res.json();
+};
+
+/** Appends a search run against a saved scan, so its exact results can be revisited too. */
+export const appendScanHistorySearch = async (
+  id: string,
+  intent: SearchIntent,
+  resultGroups: SearchResultGroup[],
+): Promise<ScanHistoryEntry> => {
+  const res = await fetch(`/api/scan-history/${encodeURIComponent(id)}/searches`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ intent, resultGroups }),
+  });
+
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? 'Failed to save search to scan history.');
+  }
+
+  return res.json();
+};
+
+/** Lists saved AI-assisted scans, newest first. */
+export const listScanHistory = async (): Promise<ScanHistoryEntry[]> => {
+  const res = await fetch('/api/scan-history');
+  if (!res.ok) {
+    throw new Error(`Failed to load scan history (${res.status})`);
+  }
+  const data = (await res.json()) as { entries: ScanHistoryEntry[] };
+  return data.entries;
+};
+
+/** Fetches a single saved scan (full search history included). */
+export const getScanHistoryEntry = async (id: string): Promise<ScanHistoryEntry> => {
+  const res = await fetch(`/api/scan-history/${encodeURIComponent(id)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load scan history entry (${res.status})`);
+  }
+  return res.json();
+};
+
+/** Deletes a saved scan and its stored photo. */
+export const deleteScanHistoryEntry = async (id: string): Promise<void> => {
+  const res = await fetch(`/api/scan-history/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) {
+    throw new Error(`Failed to delete scan history entry (${res.status})`);
+  }
 };
 
 // ---------------------------------------------------------------------------

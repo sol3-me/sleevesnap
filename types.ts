@@ -138,6 +138,31 @@ export type ScanResponse =
   | { matched: true; record: VinylRecord }
   | { matched: false; suggestions?: VinylRecord[]; vision?: ScanVisionMetadata };
 
+export interface ScanHistorySearchEntry {
+  intent: SearchIntent;
+  resultGroups: SearchResultGroup[];
+  searchedAt: number;
+}
+
+/** A persisted AI-assisted scan: captured photo + raw vision guesses + every search run against them. */
+export interface ScanHistoryEntry {
+  id: string;
+  createdAt: number;
+  imageUrl: string | null;
+  visionGuesses: ScanVisionSuggestion[];
+  suggestedQuery?: string;
+  initialSuggestions: VinylRecord[];
+  searches: ScanHistorySearchEntry[];
+}
+
+/** Payload for POST /api/scan-history (persisting a fresh AI-assisted scan) */
+export interface ScanHistoryCreatePayload {
+  capturedImage: string;
+  visionGuesses?: ScanVisionSuggestion[];
+  suggestedQuery?: string;
+  initialSuggestions?: VinylRecord[];
+}
+
 /** Payload for POST /api/scans (confirmed scan upload) */
 export interface ScanUploadPayload {
   artist: string;

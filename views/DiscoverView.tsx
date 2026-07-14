@@ -1,6 +1,7 @@
 import { getRouteApi } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { AdvancedSearchFields, AdvancedSearchFieldsValue } from '../components/AdvancedSearchFields';
 import { FilterDropdown } from '../components/FilterDropdown';
 import { Icons } from '../components/Icons';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
@@ -77,10 +78,12 @@ export function DiscoverView() {
   const [searchMode, setSearchMode] = useState<'simple' | 'advanced'>(search.m ?? 'simple');
   const [simpleSearchType, setSimpleSearchType] = useState<DiscoverSearchType>(search.st ?? 'title');
   const [inputValue, setInputValue] = useState(search.q ?? '');
-  const [advancedTitle, setAdvancedTitle] = useState(search.title ?? '');
-  const [advancedArtist, setAdvancedArtist] = useState(search.artist ?? '');
-  const [advancedYear, setAdvancedYear] = useState(search.year ?? '');
-  const [advancedLabel, setAdvancedLabel] = useState(search.label ?? '');
+  const [advancedFields, setAdvancedFields] = useState<AdvancedSearchFieldsValue>({
+    title: search.title ?? '',
+    artist: search.artist ?? '',
+    year: search.year ?? '',
+    label: search.label ?? '',
+  });
   const [searchPage, setSearchPage] = useState<SearchResultPage>(defaultSearchPage);
   const [artistEntityPage, setArtistEntityPage] = useState<SearchEntityPage<ArtistSearchEntity>>(defaultArtistEntityPage);
   const [labelEntityPage, setLabelEntityPage] = useState<SearchEntityPage<LabelSearchEntity>>(defaultLabelEntityPage);
@@ -103,10 +106,12 @@ export function DiscoverView() {
     setSearchMode(search.m ?? 'simple');
     setSimpleSearchType(search.st ?? 'title');
     setInputValue(search.q ?? '');
-    setAdvancedTitle(search.title ?? '');
-    setAdvancedArtist(search.artist ?? '');
-    setAdvancedYear(search.year ?? '');
-    setAdvancedLabel(search.label ?? '');
+    setAdvancedFields({
+      title: search.title ?? '',
+      artist: search.artist ?? '',
+      year: search.year ?? '',
+      label: search.label ?? '',
+    });
   }, [search.m, search.st, search.q, search.title, search.artist, search.year, search.label]);
 
   const isSimpleModeFromUrl = (search.m ?? 'simple') === 'simple';
@@ -315,10 +320,10 @@ export function DiscoverView() {
 
   const submitSearch = () => {
     if (searchMode === 'advanced') {
-      const title = advancedTitle.trim();
-      const artist = advancedArtist.trim();
-      const year = advancedYear.trim();
-      const label = advancedLabel.trim();
+      const title = advancedFields.title.trim();
+      const artist = advancedFields.artist.trim();
+      const year = advancedFields.year.trim();
+      const label = advancedFields.label.trim();
       if (!title && !artist && !year && !label) return;
 
       void navigate({
@@ -733,40 +738,7 @@ export function DiscoverView() {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  value={advancedTitle}
-                  onChange={(e) => setAdvancedTitle(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-                  placeholder="Title"
-                  className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
-                />
-                <input
-                  type="text"
-                  value={advancedArtist}
-                  onChange={(e) => setAdvancedArtist(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-                  placeholder="Artist"
-                  className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
-                />
-                <input
-                  type="text"
-                  value={advancedYear}
-                  onChange={(e) => setAdvancedYear(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-                  placeholder="Year"
-                  className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
-                />
-                <input
-                  type="text"
-                  value={advancedLabel}
-                  onChange={(e) => setAdvancedLabel(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-                  placeholder="Label"
-                  className="w-full bg-vinyl-800/80 text-white placeholder:text-gray-500 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors"
-                />
-              </div>
+              <AdvancedSearchFields value={advancedFields} onChange={setAdvancedFields} onSubmit={submitSearch} />
             )}
           </div>
 

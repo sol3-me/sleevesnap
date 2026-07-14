@@ -52,6 +52,16 @@ export function initDb(): void {
       date        TEXT PRIMARY KEY,
       call_count  INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS scan_history (
+      id                  TEXT PRIMARY KEY,
+      created_at          INTEGER NOT NULL,
+      image_url           TEXT,
+      vision_guesses      TEXT,
+      suggested_query     TEXT,
+      initial_suggestions TEXT,
+      searches            TEXT NOT NULL DEFAULT '[]'
+    );
   `);
 
   // Incremental migration: add phash column if it doesn't exist yet
@@ -98,4 +108,22 @@ export function incrementVisionCallCount(date: string): number {
     )
     .get(date) as { call_count: number };
   return row.call_count;
+}
+
+/**
+ * Deletes every `scan_history` row except the `keep` most recent, returning
+ * the `id` of each pruned row so the caller can also remove its stored blob
+ * (blob storage keys are derived from the id, not stored separately). Keeps
+ * scan history's DB + storage footprint bounded without any separate
+ * maintenance job.
+ */
+export function pruneScanHistory(keep: number): string[] {
+  const rows = db
+    .prepare(
+      `DELETE FROM scan_history
+       WHERE id NOT IN (SELECT id FROM scan_history ORDER BY created_at DESC, rowid DESC LIMIT ?)
+       RETURNING id`,
+    )
+    .all(keep) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
 }
