@@ -36,7 +36,7 @@ export function RootLayout() {
 
   return (
     <ScanProvider>
-      <div className="flex h-screen bg-vinyl-950 text-white overflow-hidden">
+      <div className="flex h-dvh bg-vinyl-950 text-white overflow-hidden">
         {/* Sidebar (Desktop) */}
         <aside className="hidden md:flex flex-col w-60 border-r border-white/5">
           <div className="px-5 pt-6 pb-8">
