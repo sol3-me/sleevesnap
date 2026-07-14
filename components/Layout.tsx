@@ -66,9 +66,9 @@ export function RootLayout() {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 relative overflow-y-auto h-full scroll-smooth">
+        <main className="flex-1 relative h-full flex flex-col overflow-hidden">
           {/* Mobile Header */}
-          <header className="md:hidden flex items-center px-4 py-3 bg-vinyl-950/80 backdrop-blur-xl sticky top-0 z-20 border-b border-white/5">
+          <header className="md:hidden flex items-center shrink-0 px-4 py-3 bg-vinyl-950/80 backdrop-blur-xl z-20 border-b border-white/5">
             <Logo />
             <a
               href="https://musicbrainz.org"
@@ -80,7 +80,11 @@ export function RootLayout() {
             </a>
           </header>
 
-          <Outlet />
+          {/* Scrollable route content — sized to exactly what's left after the header,
+              so a page using h-full (like the camera view) never overflows the viewport. */}
+          <div className="flex-1 overflow-y-auto scroll-smooth">
+            <Outlet />
+          </div>
 
           {/* Mobile Navigation Bar (Bottom Sticky) */}
           {!isScanRoute && (

@@ -28,6 +28,9 @@ const UploadIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
 );
 
+/** Fraction of the shorter viewfinder dimension the square capture frame occupies. */
+const FRAME_RATIO = 0.82;
+
 type Stage =
   | 'capture'           // camera / file-upload view
   | 'analyzing'         // waiting for /api/scan response
@@ -54,6 +57,7 @@ export const Scanner: React.FC<ScannerProps> = ({
   };
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -64,6 +68,10 @@ export const Scanner: React.FC<ScannerProps> = ({
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);  // base64
   const [error, setError] = useState<string | null>(null);
+  // Pixel rect of the square viewfinder within its container — measured so the
+  // capture crop matches exactly what the user framed. Also drives the stamp animation.
+  const [frameRect, setFrameRect] = useState({ size: 0, left: 0, top: 0 });
+  const [isCapturing, setIsCapturing] = useState(false);
 
   // match_found state
   const [matchedRecord, setMatchedRecord] = useState<VinylRecord | null>(null);
@@ -84,7 +92,13 @@ export const Scanner: React.FC<ScannerProps> = ({
     setIsVideoReady(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: {
+          facingMode: 'environment',
+          // Non-standard but widely honored on Chromium/Android; ignored
+          // elsewhere (e.g. Safari) rather than rejected. Helps with sleeves
+          // held close to the lens where autofocus otherwise tends to hunt.
+          advanced: [{ focusMode: 'continuous' }],
+        } as unknown as MediaTrackConstraints,
       });
       streamRef.current = stream;
       setIsStreaming(true);
@@ -129,24 +143,69 @@ export const Scanner: React.FC<ScannerProps> = ({
     void startCamera();
   }, [startCamera]);
 
+  // Keep the square viewfinder sized/centered on the video container, so the
+  // overlay the user frames against and the crop taken on capture always agree.
+  useEffect(() => {
+    if (!isStreaming) return;
+    const container = videoContainerRef.current;
+    if (!container) return;
+
+    const updateFrameRect = () => {
+      const rect = container.getBoundingClientRect();
+      const size = Math.min(rect.width, rect.height) * FRAME_RATIO;
+      setFrameRect({ size, left: (rect.width - size) / 2, top: (rect.height - size) / 2 });
+    };
+
+    updateFrameRect();
+    const observer = new ResizeObserver(updateFrameRect);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [isStreaming]);
+
   // ── Image capture ───────────────────────────────────────────────────────────
 
   const captureFromCamera = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return;
+    if (!videoRef.current || !canvasRef.current || !videoContainerRef.current) return;
     const video = videoRef.current;
     if (!isVideoReady || video.videoWidth === 0 || video.videoHeight === 0) {
       setError('Camera is still warming up. Please try again.');
       return;
     }
-    const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-    stopCamera();
-    processImage(dataUrl, 'camera');
+
+    // Play the stamp animation first, then grab the frame — the delay is what
+    // makes the capture feel like a deliberate "snap" rather than an instant cut.
+    setIsCapturing(true);
+    window.setTimeout(() => {
+      const container = videoContainerRef.current;
+      const canvas = canvasRef.current;
+      if (!container || !canvas) return;
+
+      // object-cover math: the video is scaled uniformly to cover the container,
+      // then centered and cropped. Reverse that to find the on-screen viewfinder
+      // square in source-video pixel coordinates.
+      const rect = container.getBoundingClientRect();
+      const coverScale = Math.max(rect.width / video.videoWidth, rect.height / video.videoHeight);
+      const offsetX = (video.videoWidth * coverScale - rect.width) / 2;
+      const offsetY = (video.videoHeight * coverScale - rect.height) / 2;
+
+      const size = Math.min(rect.width, rect.height) * FRAME_RATIO;
+      const left = (rect.width - size) / 2;
+      const top = (rect.height - size) / 2;
+
+      const sourceX = (left + offsetX) / coverScale;
+      const sourceY = (top + offsetY) / coverScale;
+      const sourceSize = size / coverScale;
+
+      canvas.width = sourceSize;
+      canvas.height = sourceSize;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(video, sourceX, sourceY, sourceSize, sourceSize, 0, 0, sourceSize, sourceSize);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      setIsCapturing(false);
+      stopCamera();
+      processImage(dataUrl, 'camera');
+    }, 220);
   }, [isVideoReady, stopCamera]);
 
   /** Shared by file-input selection and drag-and-drop. */
@@ -461,57 +520,124 @@ export const Scanner: React.FC<ScannerProps> = ({
 
       {/* ── Live camera feed (camera stage, streaming) ── */}
       {stage === 'capture' && isStreaming && (
-        <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden rounded-3xl bg-vinyl-900 border border-white/10">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            onLoadedMetadata={() => {
-              void videoRef.current?.play().catch(() => {
-                // If autoplay is gated, keep UI usable and let user try capture again.
-              });
-              setIsVideoReady(true);
-            }}
-            className="absolute inset-0 w-full h-full object-cover"
-          />
+        <div className="flex-1 flex flex-col min-h-0 gap-0">
+          {/* Video + viewfinder — the square frame is what actually gets captured. */}
+          <div
+            ref={videoContainerRef}
+            className="flex-1 min-h-0 relative overflow-hidden rounded-3xl bg-vinyl-900 border border-white/10"
+          >
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              onLoadedMetadata={() => {
+                void videoRef.current?.play().catch(() => {
+                  // If autoplay is gated, keep UI usable and let user try capture again.
+                });
+                setIsVideoReady(true);
+              }}
+              className="absolute inset-0 w-full h-full object-cover"
+            />
 
-          <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-4">
-            <div className="flex gap-4 items-center">
-              <button
-                onClick={stopCamera}
-                className="p-4 rounded-full bg-white/20 backdrop-blur-sm hover:bg-white/30 transition-all"
-                aria-label="Cancel camera"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-              </button>
+            {frameRect.size > 0 && (
+              <>
+                {/* Dim everything outside the square using a giant box-shadow "cutout". */}
+                <div
+                  className="absolute rounded-2xl pointer-events-none transition-transform duration-200 ease-out"
+                  style={{
+                    left: frameRect.left,
+                    top: frameRect.top,
+                    width: frameRect.size,
+                    height: frameRect.size,
+                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.55)',
+                    transform: isCapturing ? 'scale(0.92)' : 'scale(1)',
+                  }}
+                />
+                {/* Frame border + corner brackets, like a scan/viewfinder reticle. */}
+                <div
+                  className={`absolute rounded-2xl pointer-events-none border-2 transition-all duration-200 ease-out ${isCapturing ? 'border-vinyl-accent' : 'border-white/60'
+                    }`}
+                  style={{
+                    left: frameRect.left,
+                    top: frameRect.top,
+                    width: frameRect.size,
+                    height: frameRect.size,
+                    transform: isCapturing ? 'scale(0.92)' : 'scale(1)',
+                  }}
+                >
+                  {[
+                    'top-[-2px] left-[-2px] border-t-4 border-l-4 rounded-tl-2xl',
+                    'top-[-2px] right-[-2px] border-t-4 border-r-4 rounded-tr-2xl',
+                    'bottom-[-2px] left-[-2px] border-b-4 border-l-4 rounded-bl-2xl',
+                    'bottom-[-2px] right-[-2px] border-b-4 border-r-4 rounded-br-2xl',
+                  ].map((cornerClass) => (
+                    <div
+                      key={cornerClass}
+                      className={`absolute w-7 h-7 border-vinyl-accent ${cornerClass}`}
+                    />
+                  ))}
+                </div>
+                <p className="absolute left-0 right-0 text-center text-xs text-white/70" style={{ top: frameRect.top - 28 }}>
+                  Frame the sleeve in the square
+                </p>
+              </>
+            )}
 
-              <button
-                onClick={captureFromCamera}
-                disabled={!isVideoReady}
-                className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-vinyl-accent/20 hover:bg-vinyl-accent/40 transition-all active:scale-95"
-                aria-label="Capture"
-              >
-                <div className="w-16 h-16 bg-white rounded-full" />
-              </button>
+            {/* Capture flash */}
+            <div
+              className={`absolute inset-0 bg-white pointer-events-none transition-opacity ${isCapturing ? 'opacity-80 duration-75' : 'opacity-0 duration-150'
+                }`}
+            />
 
-              <div className="w-12" />
-            </div>
+            {/* Stamp badge — pops in and settles on capture, reinforcing the "snap". */}
+            {isCapturing && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="px-6 py-2 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-2xl tracking-widest uppercase animate-stamp-pop">
+                  Snap!
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Controls — in normal document flow so they can never be clipped by an
+              overflowing ancestor, with safe-area clearance for notched phones. */}
+          <div className="shrink-0 flex items-center justify-center gap-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <button
+              onClick={stopCamera}
+              className="p-4 rounded-full bg-white/10 border border-white/10 hover:bg-white/20 transition-all"
+              aria-label="Cancel camera"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
+
+            <button
+              onClick={captureFromCamera}
+              disabled={!isVideoReady || isCapturing}
+              className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center bg-vinyl-accent/20 hover:bg-vinyl-accent/40 transition-all active:scale-95 disabled:opacity-60"
+              aria-label="Capture"
+            >
+              <div className={`w-16 h-16 bg-white rounded-full transition-transform duration-150 ${isCapturing ? 'scale-75' : 'scale-100'}`} />
+            </button>
+
+            <div className="w-12" />
           </div>
         </div>
       )}
 
       {/* ── Analysing (captured still + spinner overlay) ── */}
       {stage === 'analyzing' && capturedImage && (
-        <div className="flex-1 flex flex-col items-center justify-center relative overflow-hidden rounded-3xl bg-vinyl-900 border border-white/10">
-          <img
-            src={`data:image/jpeg;base64,${capturedImage}`}
-            alt="Captured"
-            className="absolute inset-0 w-full h-full object-contain bg-black"
-          />
-          <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-10">
-            <div className="w-16 h-16 border-4 border-vinyl-accent border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-lg font-bold animate-pulse">Matching sleeve…</p>
+        <div className="flex-1 flex flex-col items-center justify-center">
+          <div className="relative w-full max-w-xs aspect-square rounded-3xl overflow-hidden bg-black border border-white/10">
+            <img
+              src={`data:image/jpeg;base64,${capturedImage}`}
+              alt="Captured"
+              className="absolute inset-0 w-full h-full object-contain"
+            />
+            <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-10">
+              <div className="w-16 h-16 border-4 border-vinyl-accent border-t-transparent rounded-full animate-spin mb-4" />
+              <p className="text-lg font-bold animate-pulse">Matching sleeve…</p>
+            </div>
           </div>
         </div>
       )}
@@ -532,7 +658,7 @@ export const Scanner: React.FC<ScannerProps> = ({
             <img
               src={`data:image/jpeg;base64,${capturedImage}`}
               alt="Captured sleeve"
-              className="w-full max-h-48 object-contain rounded-xl bg-vinyl-900"
+              className="w-40 h-40 mx-auto object-contain rounded-xl bg-vinyl-900"
             />
           )}
 
@@ -565,7 +691,7 @@ export const Scanner: React.FC<ScannerProps> = ({
             <img
               src={`data:image/jpeg;base64,${capturedImage}`}
               alt="Captured sleeve"
-              className="w-full max-h-36 object-contain rounded-xl bg-vinyl-900"
+              className="w-28 h-28 mx-auto object-contain rounded-xl bg-vinyl-900"
             />
           )}
 
