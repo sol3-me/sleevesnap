@@ -52,8 +52,10 @@ function rowToEntry(row: ScanHistoryRow): ScanHistoryEntry {
   };
 }
 
-function getRow(id: string): ScanHistoryRow | undefined {
-  return db.prepare('SELECT * FROM scan_history WHERE id = ?').get(id) as ScanHistoryRow | undefined;
+function getRow(id: string, userId: string): ScanHistoryRow | undefined {
+  return db
+    .prepare('SELECT * FROM scan_history WHERE id = ? AND user_id = ?')
+    .get(id, userId) as ScanHistoryRow | undefined;
 }
 
 /**
@@ -68,6 +70,11 @@ export function createScanHistoryRouter(storage: BlobStorageProvider, limit = DE
 
   router.post('/', async (req, res) => {
     const requestId = newRequestId();
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
     const { capturedImage, visionGuesses, suggestedQuery, initialSuggestions } = req.body as {
       capturedImage?: string;
       visionGuesses?: ScanVisionSuggestion[];
@@ -92,8 +99,8 @@ export function createScanHistoryRouter(storage: BlobStorageProvider, limit = DE
     }
 
     db.prepare(
-      `INSERT INTO scan_history (id, created_at, image_url, vision_guesses, suggested_query, initial_suggestions, searches)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO scan_history (id, created_at, image_url, vision_guesses, suggested_query, initial_suggestions, searches, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       createdAt,
@@ -102,9 +109,10 @@ export function createScanHistoryRouter(storage: BlobStorageProvider, limit = DE
       suggestedQuery ?? null,
       initialSuggestions ? JSON.stringify(initialSuggestions) : null,
       '[]',
+      uid,
     );
 
-    const prunedIds = pruneScanHistory(limit);
+    const prunedIds = pruneScanHistory(limit, uid);
     for (const prunedId of prunedIds) {
       try {
         await storage.delete(`scan-history/${prunedId}.jpg`);
@@ -115,17 +123,29 @@ export function createScanHistoryRouter(storage: BlobStorageProvider, limit = DE
 
     logEvent('scan-history', requestId, 'Saved scan history entry', { id, prunedCount: prunedIds.length });
 
-    const row = getRow(id)!;
+    const row = getRow(id, uid)!;
     res.status(201).json(rowToEntry(row));
   });
 
-  router.get('/', (_req, res) => {
-    const rows = db.prepare('SELECT * FROM scan_history ORDER BY created_at DESC, rowid DESC').all() as ScanHistoryRow[];
+  router.get('/', (req, res) => {
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const rows = db
+      .prepare('SELECT * FROM scan_history WHERE user_id = ? ORDER BY created_at DESC, rowid DESC')
+      .all(uid) as ScanHistoryRow[];
     res.json({ entries: rows.map(rowToEntry) });
   });
 
   router.get('/:id', (req, res) => {
-    const row = getRow(req.params.id);
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const row = getRow(req.params.id, uid);
     if (!row) {
       res.status(404).json({ error: 'Scan history entry not found' });
       return;
@@ -134,7 +154,12 @@ export function createScanHistoryRouter(storage: BlobStorageProvider, limit = DE
   });
 
   router.post('/:id/searches', (req, res) => {
-    const row = getRow(req.params.id);
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const row = getRow(req.params.id, uid);
     if (!row) {
       res.status(404).json({ error: 'Scan history entry not found' });
       return;
@@ -151,11 +176,16 @@ export function createScanHistoryRouter(storage: BlobStorageProvider, limit = DE
 
     db.prepare('UPDATE scan_history SET searches = ? WHERE id = ?').run(JSON.stringify(searches), row.id);
 
-    res.json(rowToEntry(getRow(row.id)!));
+    res.json(rowToEntry(getRow(row.id, uid)!));
   });
 
   router.delete('/:id', async (req, res) => {
-    const row = getRow(req.params.id);
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const row = getRow(req.params.id, uid);
     if (!row) {
       res.status(404).json({ error: 'Scan history entry not found' });
       return;

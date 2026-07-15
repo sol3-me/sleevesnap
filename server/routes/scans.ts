@@ -119,6 +119,12 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
 
     const requestId = newRequestId();
 
+    const uid = req.user?.uid;
+    if (!uid) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
     if (!artist || !title) {
       res.status(400).json({ error: 'artist and title are required' });
       return;
@@ -136,12 +142,14 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
     // when neither record has a musicBrainzId to compare.
     const existing = (
       musicBrainzId
-        ? db.prepare('SELECT * FROM collection WHERE musicbrainz_id = ?').get(musicBrainzId)
+        ? db
+            .prepare('SELECT * FROM collection WHERE user_id = ? AND musicbrainz_id = ?')
+            .get(uid, musicBrainzId)
         : db
             .prepare(
-              'SELECT * FROM collection WHERE lower(artist) = lower(?) AND lower(title) = lower(?) AND musicbrainz_id IS NULL',
+              'SELECT * FROM collection WHERE user_id = ? AND lower(artist) = lower(?) AND lower(title) = lower(?) AND musicbrainz_id IS NULL',
             )
-            .get(artist, title)
+            .get(uid, artist, title)
     ) as CollectionRow | undefined;
 
     if (existing) {
@@ -209,9 +217,10 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
         cover_url,
         date_added,
         notes,
-        phash
+        phash,
+        user_id
       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       artist,
@@ -234,6 +243,7 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
       dateAdded,
       notes ?? null,
       phash,
+      uid,
     );
 
     const saved = db
