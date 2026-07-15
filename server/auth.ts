@@ -21,8 +21,29 @@ declare global {
   }
 }
 
-export function createAuthMiddleware(_verifier: TokenVerifier): RequestHandler {
-  return (_req, _res, next) => {
-    next();
+export function createAuthMiddleware(verifier: TokenVerifier): RequestHandler {
+  return (req, res, next) => {
+    const header = req.headers.authorization;
+    if (!header?.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const token = header.slice('Bearer '.length).trim();
+    if (!token) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    verifier(token)
+      .then((user) => {
+        req.user = user;
+        next();
+      })
+      .catch(() => {
+        // Never echo verifier errors to the client — they can carry token
+        // internals. An invalid token and a missing one look identical.
+        res.status(401).json({ error: 'Invalid or expired credentials' });
+      });
   };
 }
