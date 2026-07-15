@@ -156,6 +156,28 @@ async function postScan(
   });
 }
 
+async function requestJson(
+  port: number,
+  path: string,
+  method: 'GET',
+): Promise<{ statusCode: number; json: any }> {
+  return await new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: '127.0.0.1', port, path, method },
+      (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          resolve({ statusCode: res.statusCode ?? 0, json: data ? JSON.parse(data) : undefined });
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -391,6 +413,52 @@ test('POST /api/scan validates each guess with a structured release-group search
 
     assert.equal(lullabies.title, 'Lullabies to Paralyze');
     assert.equal(lullabies.validated, false);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('GET /api/scan/quota reports the default limit and 0 used when no scans have run today', async () => {
+  const { server, port } = await startTestServer();
+  try {
+    const res = await requestJson(port, '/api/scan/quota', 'GET');
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, { used: 0, limit: 5, remaining: 5 });
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('GET /api/scan/quota respects VISION_DAILY_LIMIT and reflects prior vision-triggering scans', async () => {
+  process.env.VISION_DAILY_LIMIT = '2';
+  process.env.GEMINI_API_KEY = 'test-key';
+  globalThis.fetch = successfulVisionMock();
+
+  const { server, port } = await startTestServer();
+  try {
+    await postScan(port, TINY_JPEG_BASE64);
+
+    const res = await requestJson(port, '/api/scan/quota', 'GET');
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, { used: 1, limit: 2, remaining: 1 });
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('GET /api/scan/quota never reports negative remaining once usage exceeds the limit', async () => {
+  process.env.VISION_DAILY_LIMIT = '1';
+  process.env.GEMINI_API_KEY = 'test-key';
+  globalThis.fetch = successfulVisionMock();
+
+  const { server, port } = await startTestServer();
+  try {
+    await postScan(port, TINY_JPEG_BASE64);
+    await postScan(port, TINY_JPEG_BASE64);
+
+    const res = await requestJson(port, '/api/scan/quota', 'GET');
+    assert.equal(res.json.used, 2);
+    assert.equal(res.json.remaining, 0);
   } finally {
     await closeServer(server);
   }

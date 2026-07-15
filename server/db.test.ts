@@ -9,7 +9,7 @@ import { test } from 'node:test';
 const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sleevesnap-db-test-'));
 process.env.CACHE_DB_PATH = path.join(scratchDir, 'cache.db');
 
-const { initDb, incrementVisionCallCount } = await import('./db.js');
+const { initDb, incrementVisionCallCount, getVisionCallCount } = await import('./db.js');
 
 initDb();
 
@@ -29,4 +29,18 @@ test('tracks separate counters for different dates independently', () => {
   assert.equal(incrementVisionCallCount('2026-01-01'), 1);
   assert.equal(incrementVisionCallCount('2026-01-02'), 1);
   assert.equal(incrementVisionCallCount('2026-01-01'), 2);
+});
+
+test('getVisionCallCount returns 0 for a date with no recorded calls', () => {
+  assert.equal(getVisionCallCount('2026-03-15'), 0);
+});
+
+test('getVisionCallCount reflects prior increments without mutating the counter', () => {
+  const date = '2026-04-01';
+  incrementVisionCallCount(date);
+  incrementVisionCallCount(date);
+  incrementVisionCallCount(date);
+
+  assert.equal(getVisionCallCount(date), 3);
+  assert.equal(getVisionCallCount(date), 3, 'reading the count must not itself increment it');
 });

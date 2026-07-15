@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { db, incrementVisionCallCount } from '../db.js';
+import { db, getVisionCallCount, incrementVisionCallCount } from '../db.js';
 import { computeHash, hammingDistance } from '../imageHash.js';
 import { logEvent, logWarn, newRequestId } from '../logger.js';
 import { identifyVinyl, VisionScanResult } from '../services/visionProvider/index.js';
@@ -173,6 +173,20 @@ scanRouter.post('/', async (req, res) => {
 const DEFAULT_VISION_DAILY_LIMIT = 5;
 const VALIDATION_GROUP_LIMIT = 3;
 const DEFAULT_VALIDATION_GUESSES = 3;
+
+/**
+ * GET /api/scan/quota
+ *
+ * Read-only view of today's AI-scan allowance, for the client to show the
+ * user how many scans they have left — never increments the counter.
+ */
+scanRouter.get('/quota', (_req, res) => {
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const used = getVisionCallCount(dateKey);
+  const limit = Number(process.env.VISION_DAILY_LIMIT ?? DEFAULT_VISION_DAILY_LIMIT);
+  const remaining = Math.max(0, limit - used);
+  res.json({ used, limit, remaining });
+});
 
 /**
  * Runs the vision-assisted identification + MusicBrainz validation flow for

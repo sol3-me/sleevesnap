@@ -111,6 +111,18 @@ export function incrementVisionCallCount(date: string): number {
 }
 
 /**
+ * Reads today's vision-call counter for `date` (YYYY-MM-DD) without
+ * incrementing it — used to show the user their remaining daily scan
+ * allowance. Returns 0 for a date with no recorded calls.
+ */
+export function getVisionCallCount(date: string): number {
+  const row = db.prepare('SELECT call_count FROM vision_call_tracker WHERE date = ?').get(date) as
+    | { call_count: number }
+    | undefined;
+  return row?.call_count ?? 0;
+}
+
+/**
  * Deletes every `scan_history` row except the `keep` most recent, returning
  * the `id` of each pruned row so the caller can also remove its stored blob
  * (blob storage keys are derived from the id, not stored separately). Keeps
