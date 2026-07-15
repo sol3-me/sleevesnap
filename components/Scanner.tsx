@@ -367,6 +367,13 @@ export const Scanner: React.FC<ScannerProps> = ({
         });
         setMatchedRecord(result.record);
         setStage('match_found');
+      } else if (result.notAlbumCover) {
+        // Deliberately does not touch aiGuesses/persistScanHistory/applyGuess —
+        // there is nothing to show or save here, and no search to run.
+        logEvent('scanner', 'AI declined — photo does not look like a record sleeve', { ms });
+        setAiGuesses([]);
+        setError("That doesn't look like a record sleeve. Fill the frame with just the album cover and try again.");
+        setStage('no_match');
       } else if (result.vision?.guesses?.length) {
         const guesses = result.vision.guesses;
         const top = bestGuess(guesses)!;

@@ -147,7 +147,7 @@ export interface ScanVisionMetadata {
 /** Response from POST /api/scan */
 export type ScanResponse =
   | { matched: true; record: VinylRecord }
-  | { matched: false; vision?: ScanVisionMetadata };
+  | { matched: false; vision?: ScanVisionMetadata; notAlbumCover?: boolean };
 
 export interface ScanHistorySearchEntry {
   intent: SearchIntent;
