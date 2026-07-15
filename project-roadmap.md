@@ -2,7 +2,7 @@
 
 > **Status note (July 2026):** parts of this document predate the current architecture and are superseded:
 >
-> - **§2 (Firebase Auth/Firestore)** — the app is self-hosted with Express + SQLite and no third-party BaaS; the interim name-only login was removed entirely, with real multi-user accounts + social sign-in planned as a proper future phase (see `ux-improvement-plan.md` §1.6). Firestore-based storage and the Firestore "popular records" shared cache (§5) are deferred as potential future enhancements, depending on uptake until the self hosting route becomes too burdensome.
+> - **§2 (Firebase Auth/Firestore)** — half-superseded: **Firebase Authentication is now real** (July 2026, `feature/firebase-auth` — Google/GitHub/email sign-in, tokens verified server-side, all data scoped per user), but storage stays Express + SQLite with no Firestore; the client authenticates to *our* API, not to Firebase data services. Firestore-based storage and the Firestore "popular records" shared cache (§5) remain deferred, depending on uptake until the self hosting route becomes too burdensome.
 > - **§6 (Vitest)** — the repo standardized on Node's built-in `node:test` runner (`tsx --test`); all suites use it. Don't introduce Vitest for parity's sake.
 > - Current UX direction, priorities, and delivery order live in `ux-improvement-plan.md`; this file remains useful for the product vision (§1, §3, §4) — PWA, MusicBrainz/Cover Art Archive sourcing, and the multi-record scanner USP all still stand.
 
