@@ -7,7 +7,7 @@
 		"dev": "vite",
 		"dev:server": "tsx watch server/index.ts",
 		"build": "vite build && tsc -p tsconfig.server.json",
-		"test": "npm run test:search && npm run test:scan && npm run test:scans && npm run test:scan-history && npm run test:collection && npm run test:vision && npm run test:db && npm run test:rate-limits && npm run test:vinyl-service && npm run test:filters",
+		"test": "npm run test:search && npm run test:scan && npm run test:scans && npm run test:scan-history && npm run test:collection && npm run test:vision && npm run test:db && npm run test:rate-limits && npm run test:vinyl-service && npm run test:filters && npm run test:ai-guess",
 		"test:search": "tsx --test server/routes/search.test.ts",
 		"test:scan": "tsx --test server/routes/scan.test.ts",
 		"test:scans": "tsx --test server/routes/scans.test.ts",
@@ -18,6 +18,7 @@
 		"test:rate-limits": "tsx --test server/rateLimiters.test.ts",
 		"test:vinyl-service": "tsx --test services/vinylService.test.ts",
 		"test:filters": "tsx --test lib/filters.test.ts",
+		"test:ai-guess": "tsx --test lib/aiGuessFields.test.ts",
 		"preview": "vite preview",
 		"start": "node dist-server/index.js"
 	},

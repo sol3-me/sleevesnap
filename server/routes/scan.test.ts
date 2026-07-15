@@ -36,6 +36,42 @@ function urlOf(input: RequestInfo | URL): string {
   return input.url;
 }
 
+/** One release-group search result plus the enrichment fetches searchGroups makes for it. */
+function releaseGroupSearchMocks(url: string, groupId: string, title: string, artist: string): Response | undefined {
+  const normalized = url.toLowerCase();
+  if (normalized.includes('/ws/2/release-group?')) {
+    return jsonResponse({
+      count: 1,
+      'release-groups': [
+        {
+          id: groupId,
+          title,
+          'first-release-date': '2000-06-06',
+          'primary-type': 'Album',
+          'artist-credit': [{ artist: { name: artist } }],
+        },
+      ],
+    });
+  }
+  if (normalized.includes('/ws/2/release?') && normalized.includes('rgid')) {
+    return jsonResponse({
+      releases: [
+        {
+          id: `${groupId}-release-1`,
+          title,
+          date: '2000-06-06',
+          media: [{ format: '12" Vinyl' }],
+          'artist-credit': [{ artist: { name: artist } }],
+        },
+      ],
+    });
+  }
+  if (normalized.includes(`/ws/2/release-group/${groupId}`)) {
+    return jsonResponse({ relations: [] });
+  }
+  return undefined;
+}
+
 function successfulVisionMock(): typeof fetch {
   return (async (input: RequestInfo | URL) => {
     const url = urlOf(input);
@@ -58,20 +94,8 @@ function successfulVisionMock(): typeof fetch {
         ],
       });
     }
-    if (url.includes('musicbrainz.org')) {
-      return jsonResponse({
-        releases: [
-          {
-            id: 'release-1',
-            title: 'Rated R',
-            date: '2000-06-06',
-            media: [{ format: '12" Vinyl' }],
-            'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
-            'release-group': { id: 'group-1', title: 'Rated R', 'primary-type': 'Album' },
-          },
-        ],
-      });
-    }
+    const mbResponse = releaseGroupSearchMocks(url, 'group-1', 'Rated R', 'Queens of the Stone Age');
+    if (mbResponse) return mbResponse;
     throw new Error(`Unexpected fetch to ${url}`);
   }) as typeof fetch;
 }
@@ -156,11 +180,13 @@ test('POST /api/scan falls through to vision suggestions when no pHash match exi
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.json.matched, false);
-    assert.equal(Array.isArray(res.json.suggestions), true);
-    assert.equal(res.json.suggestions.length > 0, true);
-    assert.equal(res.json.suggestions[0].artist, 'Queens of the Stone Age');
     assert.equal(Array.isArray(res.json.vision?.guesses), true);
-    assert.equal(res.json.vision?.guesses[0]?.title, 'Rated R');
+    const guess = res.json.vision?.guesses[0];
+    assert.equal(guess?.title, 'Rated R');
+    assert.equal(guess?.validated, true, 'a guess that MusicBrainz finds a release group for must be marked validated');
+    assert.equal(Array.isArray(guess?.matchedGroups), true);
+    assert.equal(guess?.matchedGroups[0]?.releaseGroupId, 'group-1');
+    assert.equal(guess?.matchedGroups[0]?.title, 'Rated R');
     assert.equal(res.json.vision?.suggestedQuery, 'Queens of the Stone Age Rated R');
   } finally {
     await closeServer(server);
@@ -223,8 +249,8 @@ test('POST /api/scan bypasses the daily cap when X-Vision-Admin-Key matches VISI
     const res = await postScan(port, TINY_JPEG_BASE64, { 'X-Vision-Admin-Key': 'test-secret' });
 
     assert.equal(res.json.matched, false);
-    assert.equal(res.json.suggestions?.length > 0, true);
     assert.equal(res.json.vision?.guesses?.length > 0, true);
+    assert.equal(res.json.vision?.guesses[0]?.validated, true);
   } finally {
     await closeServer(server);
   }
@@ -287,51 +313,59 @@ test('POST /api/scan returns the local match immediately without calling vision'
   }
 });
 
-test('POST /api/scan validates multiple AI guesses and returns matches even when top guess is wrong', async () => {
+function threeGuessVisionResponse(): Response {
+  return jsonResponse({
+    candidates: [
+      {
+        content: {
+          parts: [
+            {
+              text: JSON.stringify([
+                { artist: 'Queens of the Stone Age', title: 'Rated R', confidence: 1.0 },
+                { artist: 'Queens of the Stone Age', title: 'Songs for the Deaf', confidence: 0.92 },
+                { artist: 'Queens of the Stone Age', title: 'Lullabies to Paralyze', confidence: 0.6 },
+              ]),
+            },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+test('POST /api/scan validates each guess with a structured release-group search and flags them individually', async () => {
   process.env.GEMINI_API_KEY = 'test-key';
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = urlOf(input);
     const normalizedUrl = url.toLowerCase();
     if (url.includes('generativelanguage.googleapis.com')) {
-      return jsonResponse({
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  text: JSON.stringify([
-                    { artist: 'Queens of the Stone Age', title: 'Rated R', confidence: 1.0 },
-                    { artist: 'Queens of the Stone Age', title: 'Songs for the Deaf', confidence: 0.92 },
-                    { artist: 'Queens of the Stone Age', title: 'Lullabies to Paralyze', confidence: 0.6 },
-                  ]),
-                },
-              ],
-            },
-          },
-        ],
-      });
+      return threeGuessVisionResponse();
     }
 
-    if (normalizedUrl.includes('musicbrainz.org/ws/2/release')) {
-      if (normalizedUrl.includes('rated') && normalizedUrl.includes('query=')) {
-        return jsonResponse({ releases: [] });
-      }
+    // Structured group search: only "Songs for the Deaf" finds anything.
+    if (normalizedUrl.includes('/ws/2/release-group?')) {
+      // The query must be the structured (indexed) form, with the artist and
+      // title as separate fielded clauses — not a flat combined string.
+      assert.equal(normalizedUrl.includes('artist'), true, 'validation query must contain a fielded artist clause');
+      assert.equal(normalizedUrl.includes('releasegroup'), true, 'validation query must contain a fielded title clause');
       if (normalizedUrl.includes('songs') && normalizedUrl.includes('deaf')) {
         return jsonResponse({
-          releases: [
+          count: 1,
+          'release-groups': [
             {
-              id: 'release-sftd-1',
+              id: 'group-sftd',
               title: 'Songs for the Deaf',
-              date: '2002-08-27',
-              media: [{ format: '12" Vinyl' }],
+              'first-release-date': '2002-08-27',
+              'primary-type': 'Album',
               'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
-              'release-group': { id: 'group-sftd', title: 'Songs for the Deaf', 'primary-type': 'Album' },
             },
           ],
         });
       }
-      return jsonResponse({ releases: [] });
+      return jsonResponse({ count: 0, 'release-groups': [] });
     }
+    const enrichment = releaseGroupSearchMocks(url, 'group-sftd', 'Songs for the Deaf', 'Queens of the Stone Age');
+    if (enrichment) return enrichment;
 
     throw new Error(`Unexpected fetch to ${url}`);
   }) as typeof fetch;
@@ -344,10 +378,69 @@ test('POST /api/scan validates multiple AI guesses and returns matches even when
     assert.equal(res.json.matched, false);
     assert.equal(Array.isArray(res.json.vision?.guesses), true);
     assert.equal(res.json.vision?.guesses.length, 3);
-    assert.equal(res.json.vision?.guesses[0]?.title, 'Rated R');
-    assert.equal(res.json.vision?.guesses[1]?.title, 'Songs for the Deaf');
-    assert.equal(Array.isArray(res.json.suggestions), true);
-    assert.equal(res.json.suggestions[0]?.title, 'Songs for the Deaf');
+
+    const [ratedR, sftd, lullabies] = res.json.vision.guesses;
+    assert.equal(ratedR.title, 'Rated R');
+    assert.equal(ratedR.validated, false, 'a guess MusicBrainz has no release group for must not be validated');
+    assert.deepEqual(ratedR.matchedGroups, []);
+
+    assert.equal(sftd.title, 'Songs for the Deaf');
+    assert.equal(sftd.validated, true);
+    assert.equal(sftd.matchedGroups[0]?.releaseGroupId, 'group-sftd');
+    assert.equal(sftd.matchedGroups[0]?.availableFormats?.includes('12" Vinyl'), true);
+
+    assert.equal(lullabies.title, 'Lullabies to Paralyze');
+    assert.equal(lullabies.validated, false);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('POST /api/scan degrades a guess to unvalidated when its validation search fails, without failing the scan', async () => {
+  process.env.GEMINI_API_KEY = 'test-key';
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = urlOf(input);
+    const normalizedUrl = url.toLowerCase();
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return threeGuessVisionResponse();
+    }
+
+    if (normalizedUrl.includes('/ws/2/release-group?')) {
+      // "Rated R" validation blows up server-side; the others behave.
+      if (normalizedUrl.includes('rated')) {
+        return jsonResponse({ error: 'boom' }, 500);
+      }
+      if (normalizedUrl.includes('songs') && normalizedUrl.includes('deaf')) {
+        return jsonResponse({
+          count: 1,
+          'release-groups': [
+            {
+              id: 'group-sftd',
+              title: 'Songs for the Deaf',
+              'first-release-date': '2002-08-27',
+              'primary-type': 'Album',
+              'artist-credit': [{ artist: { name: 'Queens of the Stone Age' } }],
+            },
+          ],
+        });
+      }
+      return jsonResponse({ count: 0, 'release-groups': [] });
+    }
+    const enrichment = releaseGroupSearchMocks(url, 'group-sftd', 'Songs for the Deaf', 'Queens of the Stone Age');
+    if (enrichment) return enrichment;
+
+    throw new Error(`Unexpected fetch to ${url}`);
+  }) as typeof fetch;
+
+  const { server, port } = await startTestServer();
+  try {
+    const res = await postScan(port, TINY_JPEG_BASE64);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json.matched, false);
+    assert.equal(res.json.vision?.guesses.length, 3);
+    assert.equal(res.json.vision?.guesses[0]?.validated, false);
+    assert.equal(res.json.vision?.guesses[1]?.validated, true);
   } finally {
     await closeServer(server);
   }

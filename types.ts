@@ -126,6 +126,10 @@ export interface ScanVisionSuggestion {
   year?: string;
   genre?: string;
   confidence: number;
+  /** True when a background MusicBrainz release-group search found at least one match for this guess. */
+  validated?: boolean;
+  /** The release groups that background search found (empty when not validated). */
+  matchedGroups?: SearchResultGroup[];
 }
 
 export interface ScanVisionMetadata {
