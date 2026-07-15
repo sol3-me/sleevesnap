@@ -4,6 +4,9 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb } from './db.js';
+import { createAuthMiddleware } from './auth.js';
+import { createFirebaseVerifier } from './firebaseVerifier.js';
+import { legacyClaimMiddleware } from './legacyClaim.js';
 import { collectionRouter } from './routes/collection.js';
 import { scanRouter } from './routes/scan.js';
 import { searchRouter } from './routes/search.js';
@@ -36,17 +39,33 @@ initDb();
 // Initialise storage provider
 const storage = createStorageProvider();
 
-// Serve locally stored cover art
+// Serve locally stored cover art. Deliberately NOT behind auth: cover and
+// scan images are loaded via <img> tags, which cannot send Authorization
+// headers. Keys are unguessable UUIDs; signed URLs are the future upgrade.
 const coversPath = process.env.STORAGE_LOCAL_PATH ?? path.join(process.cwd(), 'data', 'covers');
 app.use('/covers', apiLimiter, express.static(coversPath));
 
+// Every API route requires a signed-in user; verification only needs the
+// Firebase project id (no service-account credentials).
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
+if (!FIREBASE_PROJECT_ID) {
+  console.error(
+    '[server] FIREBASE_PROJECT_ID is not set. All API routes require Firebase Authentication — set it in .env to your Firebase project id.',
+  );
+  process.exit(1);
+}
+const requireAuth = [
+  createAuthMiddleware(createFirebaseVerifier(FIREBASE_PROJECT_ID)),
+  legacyClaimMiddleware,
+];
+
 // API routes
-app.use('/api/collection', apiLimiter, collectionRouter);
-app.use('/api/scan', scanLimiter, scanRouter);
-app.use('/api/scans', apiLimiter, createScansRouter(storage));
-app.use('/api/scan-history', apiLimiter, createScanHistoryRouter(storage));
-app.use('/api/search', apiLimiter, searchRouter);
-app.use('/api/covers', apiLimiter, createCoversRouter(storage));
+app.use('/api/collection', apiLimiter, requireAuth, collectionRouter);
+app.use('/api/scan', scanLimiter, requireAuth, scanRouter);
+app.use('/api/scans', apiLimiter, requireAuth, createScansRouter(storage));
+app.use('/api/scan-history', apiLimiter, requireAuth, createScanHistoryRouter(storage));
+app.use('/api/search', apiLimiter, requireAuth, searchRouter);
+app.use('/api/covers', apiLimiter, requireAuth, createCoversRouter(storage));
 
 // Health check
 app.get('/api/health', (_req, res) => {

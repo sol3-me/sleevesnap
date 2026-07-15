@@ -1,3 +1,4 @@
+import type { RequestHandler } from 'express';
 import type { AuthenticatedUser } from './auth.js';
 import { db } from './db.js';
 
@@ -30,3 +31,11 @@ export function claimLegacyRows(user: AuthenticatedUser): void {
     );
   }
 }
+
+/** Express glue: runs the claim for every authenticated request. */
+export const legacyClaimMiddleware: RequestHandler = (req, _res, next) => {
+  if (req.user) {
+    claimLegacyRows(req.user);
+  }
+  next();
+};
