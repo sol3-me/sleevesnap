@@ -140,7 +140,7 @@ export interface ScanVisionMetadata {
 /** Response from POST /api/scan */
 export type ScanResponse =
   | { matched: true; record: VinylRecord }
-  | { matched: false; suggestions?: VinylRecord[]; vision?: ScanVisionMetadata };
+  | { matched: false; vision?: ScanVisionMetadata };
 
 export interface ScanHistorySearchEntry {
   intent: SearchIntent;

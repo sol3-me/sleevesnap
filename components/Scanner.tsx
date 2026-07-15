@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AdvancedSearchFields, AdvancedSearchFieldsValue } from '../components/AdvancedSearchFields';
+import { AiGuessSearchFields } from '../components/AiGuessSearchFields';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
+import { bestGuess, guessToFields } from '../lib/aiGuessFields';
 import { triggerImageDownload } from '../lib/downloadImage';
 import { logEvent, logWarn } from '../services/telemetry';
 import {
@@ -90,14 +92,6 @@ export const Scanner: React.FC<ScannerProps> = ({
   initialImage,
   onInitialImageConsumed,
 }) => {
-  const confidenceBand = (confidence?: number) => {
-    const score = Math.max(0, Math.min(1, confidence ?? 0));
-    if (score >= 0.85) return 'High';
-    if (score >= 0.6) return 'Medium';
-    if (score >= 0.35) return 'Low';
-    return 'Total Guess';
-  };
-
   const videoRef = useRef<HTMLVideoElement>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -325,14 +319,12 @@ export const Scanner: React.FC<ScannerProps> = ({
     base64Image: string,
     visionGuesses: ScanVisionSuggestion[],
     suggestedQuery: string | undefined,
-    initialSuggestions: VinylRecord[],
   ) => {
     try {
       const entry = await createScanHistoryEntry({
         capturedImage: base64Image,
         visionGuesses,
         suggestedQuery,
-        initialSuggestions,
       });
       scanHistoryIdRef.current = entry.id;
     } catch (err) {
@@ -357,32 +349,19 @@ export const Scanner: React.FC<ScannerProps> = ({
         });
         setMatchedRecord(result.record);
         setStage('match_found');
-      } else if (result.suggestions?.length) {
-        const top = result.suggestions[0]!;
-        const fields: AdvancedSearchFieldsValue = { title: top.title, artist: top.artist, year: top.year ?? '', label: '' };
-        logEvent('scanner', 'AI-assisted suggestions returned', {
-          count: result.suggestions.length,
-          top: result.suggestions.slice(0, 3).map((r) => `${r.artist} - ${r.title}`),
-          suggestedQuery: result.vision?.suggestedQuery,
-          ms,
-        });
-        setAiGuesses(result.vision?.guesses ?? []);
-        setSearchFields(fields);
-        await persistScanHistory(base64, result.vision?.guesses ?? [], result.vision?.suggestedQuery, result.suggestions);
-        await runGroupedSearch(intentFromFields(fields));
       } else if (result.vision?.guesses?.length) {
-        const top = result.vision.guesses[0]!;
-        const fields: AdvancedSearchFieldsValue = { title: top.title, artist: top.artist, year: top.year ?? '', label: '' };
-        logEvent('scanner', 'Vision guess returned without validated suggestions', {
-          guessCount: result.vision.guesses.length,
-          topGuess: `${top.artist} - ${top.title}`,
+        const guesses = result.vision.guesses;
+        const top = bestGuess(guesses)!;
+        logEvent('scanner', 'AI guesses returned', {
+          guessCount: guesses.length,
+          validatedCount: guesses.filter((g) => g.validated).length,
+          autoFilled: `${top.artist} - ${top.title}`,
           suggestedQuery: result.vision.suggestedQuery,
           ms,
         });
-        setAiGuesses(result.vision.guesses);
-        setSearchFields(fields);
-        await persistScanHistory(base64, result.vision.guesses, result.vision.suggestedQuery, []);
-        await runGroupedSearch(intentFromFields(fields));
+        setAiGuesses(guesses);
+        await persistScanHistory(base64, guesses, result.vision.suggestedQuery);
+        applyGuess(top);
       } else {
         logEvent('scanner', 'No match and no suggestions — falling back to manual search', { ms });
         setAiGuesses([]);
@@ -436,6 +415,33 @@ export const Scanner: React.FC<ScannerProps> = ({
   const handleSearch = async () => {
     if (!hasAnyIntentField(searchFields)) return;
     await runGroupedSearch(intentFromFields(searchFields));
+  };
+
+  /**
+   * Fills all fields from a guess. When the server already validated the
+   * guess (matchedGroups came back with the scan), show those results
+   * immediately instead of re-running the identical search.
+   */
+  const applyGuess = (guess: ScanVisionSuggestion) => {
+    const fields = guessToFields(guess);
+    setSearchFields(fields);
+
+    if (guess.matchedGroups?.length) {
+      setError(null);
+      setGroupReleases({});
+      setExpandedGroups({});
+      setLoadingGroupIds({});
+      setSearchGroups(guess.matchedGroups);
+      setStage('search_results');
+      if (scanHistoryIdRef.current) {
+        appendScanHistorySearch(scanHistoryIdRef.current, intentFromFields(fields), guess.matchedGroups).catch((err) => {
+          logWarn('scanner', 'Failed to append search to scan history', { error: err instanceof Error ? err.message : String(err) });
+        });
+      }
+      return;
+    }
+
+    void runGroupedSearch(intentFromFields(fields));
   };
 
   const downloadCapturedImage = () => {
@@ -542,12 +548,8 @@ export const Scanner: React.FC<ScannerProps> = ({
       setSearchGroups(lastSearch.resultGroups);
       setStage('search_results');
     } else {
-      const topGuess = entry.visionGuesses[0];
-      setSearchFields(
-        topGuess
-          ? { title: topGuess.title, artist: topGuess.artist, year: topGuess.year ?? '', label: '' }
-          : emptySearchFields,
-      );
+      const topGuess = bestGuess(entry.visionGuesses);
+      setSearchFields(topGuess ? guessToFields(topGuess) : emptySearchFields);
       setSearchGroups([]);
       setStage('no_match');
     }
@@ -884,48 +886,29 @@ export const Scanner: React.FC<ScannerProps> = ({
             </p>
           )}
 
-          {aiGuesses.length > 0 && (
-            <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
-              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">AI suggestions</p>
-              <div className="flex flex-wrap gap-2">
-                {aiGuesses
-                  .slice()
-                  .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
-                  .map((guess, idx) => {
-                    const fields: AdvancedSearchFieldsValue = {
-                      title: guess.title,
-                      artist: guess.artist,
-                      year: guess.year ?? '',
-                      label: '',
-                    };
-                    return (
-                      <button
-                        key={`${guess.artist}-${guess.title}-${idx}`}
-                        onClick={() => {
-                          setSearchFields(fields);
-                          void runGroupedSearch(intentFromFields(fields));
-                        }}
-                        className="px-3 py-1.5 rounded-full border border-white/15 bg-white/5 text-xs text-gray-200 hover:bg-white/10 transition-colors"
-                      >
-                        {`${guess.artist} - ${guess.title}`}
-                        <span className="text-gray-400 ml-1">{confidenceBand(guess.confidence)}</span>
-                      </button>
-                    );
-                  })}
-              </div>
-              <p className="text-[11px] text-gray-500 mt-2">
-                AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
-              </p>
-            </div>
-          )}
-
           {error && (
             <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>
           )}
 
-          {/* Search fields */}
+          {/* Search fields — AI-annotated when we have guesses, plain otherwise */}
           <div className="flex flex-col gap-2">
-            <AdvancedSearchFields value={searchFields} onChange={setSearchFields} onSubmit={handleSearch} />
+            {aiGuesses.length > 0 ? (
+              <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+                <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">AI suggestions · ✓ found on MusicBrainz</p>
+                <AiGuessSearchFields
+                  guesses={aiGuesses}
+                  value={searchFields}
+                  onChange={setSearchFields}
+                  onSubmit={handleSearch}
+                  onApplyGuess={applyGuess}
+                />
+                <p className="text-[11px] text-gray-500 mt-2">
+                  AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
+                </p>
+              </div>
+            ) : (
+              <AdvancedSearchFields value={searchFields} onChange={setSearchFields} onSubmit={handleSearch} />
+            )}
             <button
               onClick={handleSearch}
               disabled={stage === 'searching' || !hasAnyIntentField(searchFields)}
