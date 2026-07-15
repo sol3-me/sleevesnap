@@ -13,9 +13,17 @@ const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sleevesnap-scans-test-
 process.env.CACHE_DB_PATH = path.join(scratchDir, 'cache.db');
 
 const { initDb } = await import('../db.js');
+const { createAuthMiddleware } = await import('../auth.js');
 const { createScansRouter } = await import('./scans.js');
 
 initDb();
+
+// Two fixed identities so tests can exercise per-user dedup. The middleware
+// itself is covered by auth.test.ts.
+const USERS: Record<string, { uid: string; email: string }> = {
+  'token-a': { uid: 'user-a', email: 'a@example.com' },
+  'token-b': { uid: 'user-b', email: 'b@example.com' },
+};
 
 // Neither test here provides capturedImage or coverUrl, so the storage
 // provider is never actually invoked — a stub that throws if called is
@@ -30,7 +38,15 @@ const unusedStorage: BlobStorageProvider = {
 async function startTestServer(): Promise<{ server: http.Server; port: number }> {
   const app = express();
   app.use(express.json({ limit: '15mb' }));
-  app.use('/api/scans', createScansRouter(unusedStorage));
+  app.use(
+    '/api/scans',
+    createAuthMiddleware(async (token) => {
+      const user = USERS[token];
+      if (!user) throw new Error('unknown token');
+      return user;
+    }),
+    createScansRouter(unusedStorage),
+  );
 
   return await new Promise((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
@@ -60,9 +76,15 @@ async function requestJson(
   path: string,
   method: 'GET' | 'POST',
   body?: unknown,
+  token = 'token-a',
 ): Promise<{ statusCode: number; json: any }> {
   return await new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : undefined;
+    const headers: Record<string, string | number> = { authorization: `Bearer ${token}` };
+    if (payload) {
+      headers['content-type'] = 'application/json';
+      headers['content-length'] = Buffer.byteLength(payload);
+    }
 
     const req = http.request(
       {
@@ -70,9 +92,7 @@ async function requestJson(
         port,
         path,
         method,
-        headers: payload
-          ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
-          : undefined,
+        headers,
       },
       (res) => {
         let data = '';
@@ -160,6 +180,38 @@ test('POST /api/scans falls back to artist + title dedup when neither record has
       duplicate.statusCode,
       409,
       'without a musicBrainzId on either side, the legacy artist+title guard should still apply',
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('POST /api/scans lets two different users each save the same pressing', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const forA = await requestJson(port, '/api/scans', 'POST', {
+      artist: 'Portishead',
+      title: 'Dummy',
+      musicBrainzId: 'mbid-dummy-1994',
+    });
+    assert.equal(forA.statusCode, 201);
+
+    const forB = await requestJson(
+      port,
+      '/api/scans',
+      'POST',
+      {
+        artist: 'Portishead',
+        title: 'Dummy',
+        musicBrainzId: 'mbid-dummy-1994',
+      },
+      'token-b',
+    );
+    assert.equal(
+      forB.statusCode,
+      201,
+      "scan-save dedup must be per-user — A owning a pressing doesn't make it a duplicate for B",
     );
   } finally {
     await closeServer(server);

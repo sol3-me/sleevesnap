@@ -10,7 +10,16 @@
 services:
 
   app:
-    build: .
+    build:
+      context: .
+      # Vite inlines these into the client bundle during the build itself —
+      # they must be build args, not the runtime `environment:` below (which
+      # only affects the already-built container at startup).
+      args:
+        VITE_FIREBASE_API_KEY: "${VITE_FIREBASE_API_KEY:-}"
+        VITE_FIREBASE_AUTH_DOMAIN: "${VITE_FIREBASE_AUTH_DOMAIN:-}"
+        VITE_FIREBASE_PROJECT_ID: "${VITE_FIREBASE_PROJECT_ID:-}"
+        VITE_FIREBASE_APP_ID: "${VITE_FIREBASE_APP_ID:-}"
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"
@@ -21,6 +30,7 @@ services:
       CACHE_DB_PATH: /data/cache.db
       STORAGE_LOCAL_PATH: /data/covers
       PUBLIC_URL: "${PUBLIC_URL:-}"
+      FIREBASE_PROJECT_ID: "${FIREBASE_PROJECT_ID:-}"
 
       # Optional API integrations
       DISCOGS_TOKEN: "${DISCOGS_TOKEN:-}"

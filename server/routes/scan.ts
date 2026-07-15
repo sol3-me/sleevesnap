@@ -89,6 +89,11 @@ function rowToRecord(row: CollectionRow) {
 scanRouter.post('/', async (req, res) => {
   const requestId = newRequestId();
   const startedAt = Date.now();
+  const uid = req.user?.uid;
+  if (!uid) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
   const { base64Image } = req.body;
 
   if (!base64Image || typeof base64Image !== 'string') {
@@ -120,10 +125,12 @@ scanRouter.post('/', async (req, res) => {
     return;
   }
 
-  // Retrieve all collection items that have a stored hash
+  // Retrieve the requesting user's collection items that have a stored hash —
+  // never match against other users' collections, both for correctness (it's
+  // not *their* copy) and so no other user's metadata can leak into a scan.
   const rows = db
-    .prepare('SELECT * FROM collection WHERE phash IS NOT NULL')
-    .all() as CollectionRow[];
+    .prepare('SELECT * FROM collection WHERE user_id = ? AND phash IS NOT NULL')
+    .all(uid) as CollectionRow[];
 
   let bestMatch: CollectionRow | null = null;
   let bestDistance = Infinity;
@@ -196,9 +203,9 @@ scanRouter.get('/quota', (_req, res) => {
 /**
  * Runs the vision-assisted identification + MusicBrainz validation flow for
  * a photo that didn't match anything in the collection. Enforces a global
- * daily cap on vision-provider calls (this app has no per-user accounts, so
- * the cap is shared across the whole deployment) with an optional admin
- * bypass. Never throws — any failure degrades to "no suggestions", which the
+ * daily cap on vision-provider calls (deliberately shared across all users —
+ * it exists to bound the deployment's total vision-API spend, not to ration
+ * fairly per user) with an optional admin bypass. Never throws — any failure degrades to "no suggestions", which the
  * client already treats identically to today's plain no-match state.
  */
 async function getVisionSuggestions(

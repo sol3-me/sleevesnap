@@ -13,9 +13,17 @@ process.env.CACHE_DB_PATH = path.join(scratchDir, 'cache.db');
 
 const { initDb, db } = await import('../db.js');
 const { computeHash } = await import('../imageHash.js');
+const { createAuthMiddleware } = await import('../auth.js');
 const { scanRouter } = await import('./scan.js');
 
 initDb();
+
+// Two fixed identities so tests can exercise cross-user isolation of the
+// pHash matcher. The middleware itself is covered by auth.test.ts.
+const USERS: Record<string, { uid: string; email: string }> = {
+  'token-a': { uid: 'user-a', email: 'a@example.com' },
+  'token-b': { uid: 'user-b', email: 'b@example.com' },
+};
 
 const originalFetch = globalThis.fetch;
 
@@ -103,7 +111,15 @@ function successfulVisionMock(): typeof fetch {
 async function startTestServer(): Promise<{ server: http.Server; port: number }> {
   const app = express();
   app.use(express.json({ limit: '20mb' }));
-  app.use('/api/scan', scanRouter);
+  app.use(
+    '/api/scan',
+    createAuthMiddleware(async (token) => {
+      const user = USERS[token];
+      if (!user) throw new Error('unknown token');
+      return user;
+    }),
+    scanRouter,
+  );
 
   return await new Promise((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
@@ -126,6 +142,7 @@ async function postScan(
   port: number,
   base64Image: string,
   headers: Record<string, string> = {},
+  token = 'token-a',
 ): Promise<{ statusCode: number; json: any }> {
   return await new Promise((resolve, reject) => {
     const payload = JSON.stringify({ base64Image });
@@ -138,6 +155,7 @@ async function postScan(
         headers: {
           'content-type': 'application/json',
           'content-length': Buffer.byteLength(payload),
+          authorization: `Bearer ${token}`,
           ...headers,
         },
       },
@@ -163,7 +181,7 @@ async function requestJson(
 ): Promise<{ statusCode: number; json: any }> {
   return await new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: '127.0.0.1', port, path, method },
+      { hostname: '127.0.0.1', port, path, method, headers: { authorization: 'Bearer token-a' } },
       (res) => {
         let data = '';
         res.setEncoding('utf8');
@@ -310,8 +328,8 @@ test('POST /api/scan returns the local match immediately without calling vision'
   const fixtureBuffer = Buffer.from(TINY_JPEG_BASE64, 'base64');
   const hash = await computeHash(fixtureBuffer);
   db.prepare(
-    `INSERT INTO collection (id, artist, title, date_added, phash) VALUES (?, ?, ?, ?, ?)`,
-  ).run('existing-1', 'Existing Artist', 'Existing Album', Date.now(), hash);
+    `INSERT INTO collection (id, artist, title, date_added, phash, user_id) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run('existing-1', 'Existing Artist', 'Existing Album', Date.now(), hash, 'user-a');
 
   process.env.GEMINI_API_KEY = 'test-key';
   let visionCalled = false;
@@ -330,6 +348,30 @@ test('POST /api/scan returns the local match immediately without calling vision'
     assert.equal(res.json.matched, true);
     assert.equal(res.json.record.artist, 'Existing Artist');
     assert.equal(visionCalled, false);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("POST /api/scan never matches another user's collection record", async () => {
+  const fixtureBuffer = Buffer.from(TINY_JPEG_BASE64, 'base64');
+  const hash = await computeHash(fixtureBuffer);
+  db.prepare(
+    `INSERT INTO collection (id, artist, title, date_added, phash, user_id) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run('a-owned-record', 'Private Artist', 'Private Album', Date.now(), hash, 'user-a');
+
+  // No vision key configured: a non-match degrades to a plain { matched: false }.
+  const { server, port } = await startTestServer();
+  try {
+    const res = await postScan(port, TINY_JPEG_BASE64, {}, 'token-b');
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(
+      res.json.matched,
+      false,
+      "user B's scan must not pHash-match a record that only exists in user A's collection",
+    );
+    assert.equal(res.json.record, undefined, "user A's record metadata must not leak to user B");
   } finally {
     await closeServer(server);
   }

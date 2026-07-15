@@ -10,6 +10,20 @@ RUN npm ci
 # Copy source
 COPY . .
 
+# Vite inlines VITE_* vars into the client bundle at build time (this RUN
+# step), not at container runtime — they must arrive as build-args, not as
+# regular container env vars. These are public client identifiers, not
+# secrets (see lib/firebase.ts), but --build-arg is still the only way to
+# get them into this stage at all.
+ARG VITE_FIREBASE_API_KEY
+ARG VITE_FIREBASE_AUTH_DOMAIN
+ARG VITE_FIREBASE_PROJECT_ID
+ARG VITE_FIREBASE_APP_ID
+ENV VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
+    VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN \
+    VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID \
+    VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID
+
 # Build Vite frontend + compile TypeScript server
 RUN npm run build
 

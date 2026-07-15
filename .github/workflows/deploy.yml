@@ -56,6 +56,15 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE }}:latest
+          # Vite inlines these into the client bundle during `npm run build`
+          # inside the Docker build itself — they must be build-args, not
+          # runtime container env vars (those are set further below, for the
+          # server-side config the container reads at startup).
+          build-args: |
+            VITE_FIREBASE_API_KEY=${{ secrets.VITE_FIREBASE_API_KEY }}
+            VITE_FIREBASE_AUTH_DOMAIN=${{ vars.FIREBASE_AUTH_DOMAIN }}
+            VITE_FIREBASE_PROJECT_ID=${{ vars.FIREBASE_PROJECT_ID }}
+            VITE_FIREBASE_APP_ID=${{ vars.VITE_FIREBASE_APP_ID }}
 
       - name: Push :latest to GHCR
         run: docker push ${{ env.IMAGE }}:latest
@@ -64,6 +73,7 @@ jobs:
         env:
           MUSICBRAINZ_APP_NAME: ${{ vars.MUSICBRAINZ_APP_NAME || 'sleevesnap' }}
           VISION_DAILY_LIMIT: ${{ vars.VISION_DAILY_LIMIT || '5' }}
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           DISCOGS_TOKEN: ${{ secrets.DISCOGS_TOKEN }}
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -77,6 +87,7 @@ jobs:
             "MUSICBRAINZ_APP_NAME=$MUSICBRAINZ_APP_NAME" \
             "CACHE_DB_PATH=/data/cache.db" \
             "STORAGE_LOCAL_PATH=/data/covers" \
+            "FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID" \
             "DISCOGS_TOKEN=$DISCOGS_TOKEN" \
             "LASTFM_API_KEY=$LASTFM_API_KEY" \
             "GEMINI_API_KEY=$GEMINI_API_KEY" \

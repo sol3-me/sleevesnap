@@ -74,6 +74,13 @@ export function initDb(): void {
   };
 
   addColumnIfMissing('phash', 'TEXT');
+  addColumnIfMissing('user_id', 'TEXT');
+
+  const scanHistoryCols = db.pragma('table_info(scan_history)') as Array<{ name: string }>;
+  if (!scanHistoryCols.some((c) => c.name === 'user_id')) {
+    db.exec('ALTER TABLE scan_history ADD COLUMN user_id TEXT');
+    console.log('[db] Added user_id column to scan_history');
+  }
   addColumnIfMissing('release_date', 'TEXT');
   addColumnIfMissing('format', 'TEXT');
   addColumnIfMissing('country', 'TEXT');
@@ -123,19 +130,24 @@ export function getVisionCallCount(date: string): number {
 }
 
 /**
- * Deletes every `scan_history` row except the `keep` most recent, returning
- * the `id` of each pruned row so the caller can also remove its stored blob
- * (blob storage keys are derived from the id, not stored separately). Keeps
- * scan history's DB + storage footprint bounded without any separate
- * maintenance job.
+ * Deletes a user's `scan_history` rows except their `keep` most recent,
+ * returning the `id` of each pruned row so the caller can also remove its
+ * stored blob (blob storage keys are derived from the id, not stored
+ * separately). Per-user, so one user's scanning never evicts another's
+ * history. Keeps scan history's DB + storage footprint bounded without any
+ * separate maintenance job.
  */
-export function pruneScanHistory(keep: number): string[] {
+export function pruneScanHistory(keep: number, userId: string): string[] {
   const rows = db
     .prepare(
       `DELETE FROM scan_history
-       WHERE id NOT IN (SELECT id FROM scan_history ORDER BY created_at DESC, rowid DESC LIMIT ?)
+       WHERE user_id = ?
+         AND id NOT IN (
+           SELECT id FROM scan_history WHERE user_id = ?
+           ORDER BY created_at DESC, rowid DESC LIMIT ?
+         )
        RETURNING id`,
     )
-    .all(keep) as Array<{ id: string }>;
+    .all(userId, userId, keep) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }

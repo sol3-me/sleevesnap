@@ -1,3 +1,4 @@
+import { apiFetch } from '../lib/apiFetch';
 import { VinylRecord } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -5,13 +6,13 @@ import { VinylRecord } from '../types';
 // ---------------------------------------------------------------------------
 
 export const getCollection = async (): Promise<VinylRecord[]> => {
-  const res = await fetch('/api/collection');
+  const res = await apiFetch('/api/collection');
   if (!res.ok) return [];
   return res.json();
 };
 
 export const addRecord = async (record: VinylRecord): Promise<boolean> => {
-  const res = await fetch('/api/collection', {
+  const res = await apiFetch('/api/collection', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(record),
@@ -21,5 +22,5 @@ export const addRecord = async (record: VinylRecord): Promise<boolean> => {
 };
 
 export const removeRecord = async (id: string): Promise<void> => {
-  await fetch(`/api/collection/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await apiFetch(`/api/collection/${encodeURIComponent(id)}`, { method: 'DELETE' });
 };

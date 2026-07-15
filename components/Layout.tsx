@@ -1,7 +1,55 @@
 import { Link, Outlet, useLocation } from '@tanstack/react-router';
 import { Toaster } from 'sonner';
+import { useAuth } from '../contexts/AuthContext';
 import { ScanProvider } from '../contexts/ScanContext';
 import { Icons } from './Icons';
+
+/** Compact account row: avatar (or initial), name/email, sign-out. */
+function AccountSection() {
+  const { user, signOut } = useAuth();
+  if (!user) return null;
+
+  const label = user.displayName ?? user.email ?? 'Signed in';
+  const initial = label.charAt(0).toUpperCase();
+
+  return (
+    <div className="px-3 pb-3">
+      <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl bg-white/[0.03] border border-white/5">
+        {user.photoURL ? (
+          <img
+            src={user.photoURL}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="w-8 h-8 rounded-full shrink-0"
+          />
+        ) : (
+          <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-vinyl-accent/20 text-vinyl-accent text-sm font-semibold">
+            {initial}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-white truncate">{label}</p>
+          {user.displayName && user.email && (
+            <p className="text-[11px] text-gray-500 truncate">{user.email}</p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => void signOut()}
+          title="Sign out"
+          aria-label="Sign out"
+          className="shrink-0 p-1.5 rounded-lg text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
+        >
+          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const navLinkClassName =
   'flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-white/5';
@@ -15,6 +63,28 @@ const mobileNavLinkActiveClassName =
 
 const creditClassName =
   'text-[11px] text-gray-500 px-5 pb-4';
+
+/** Mobile-header sign-out: icon-only, since the sidebar (and its account row) is hidden below md. */
+function MobileSignOutButton() {
+  const { user, signOut } = useAuth();
+  if (!user) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => void signOut()}
+      title="Sign out"
+      aria-label="Sign out"
+      className="shrink-0 p-1.5 rounded-lg text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
+    >
+      <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+        <polyline points="16 17 21 12 16 7" />
+        <line x1="21" y1="12" x2="9" y2="12" />
+      </svg>
+    </button>
+  );
+}
 
 /** The brand mark: a tiny vinyl record next to the wordmark. */
 function Logo() {
@@ -53,6 +123,7 @@ export function RootLayout() {
               <Icons.Camera /> Scan
             </Link>
           </nav>
+          <AccountSection />
           <div className={creditClassName}>
             <a
               href="https://musicbrainz.org"
@@ -68,7 +139,7 @@ export function RootLayout() {
         {/* Main Content */}
         <main className="flex-1 relative h-full flex flex-col overflow-hidden">
           {/* Mobile Header */}
-          <header className="md:hidden flex items-center shrink-0 px-4 py-3 bg-vinyl-950/80 backdrop-blur-xl z-20 border-b border-white/5">
+          <header className="md:hidden flex items-center gap-3 shrink-0 px-4 py-3 bg-vinyl-950/80 backdrop-blur-xl z-20 border-b border-white/5">
             <Logo />
             <a
               href="https://musicbrainz.org"
@@ -78,6 +149,7 @@ export function RootLayout() {
             >
               powered by musicbrainz <span aria-label="heart">❤</span>
             </a>
+            <MobileSignOutButton />
           </header>
 
           {/* Scrollable route content — sized to exactly what's left after the header,
