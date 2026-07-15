@@ -929,7 +929,9 @@ export const Scanner: React.FC<ScannerProps> = ({
             <div className="flex flex-col gap-2">
               {aiGuesses.length > 0 ? (
                 <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
-                  <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">AI suggestions · ✓ found on MusicBrainz</p>
+                  <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">
+                    AI suggestions{aiGuesses.some((g) => g.validated) ? ' · ✓ found on MusicBrainz' : ''}
+                  </p>
                   <AiGuessSearchFields
                     guesses={aiGuesses}
                     value={searchFields}
