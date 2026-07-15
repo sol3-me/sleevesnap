@@ -3,7 +3,7 @@ import { db, incrementVisionCallCount } from '../db.js';
 import { computeHash, hammingDistance } from '../imageHash.js';
 import { logEvent, logWarn, newRequestId } from '../logger.js';
 import { identifyVinyl, VisionScanResult } from '../services/visionProvider/index.js';
-import { searchReleasesByText } from './search.js';
+import { searchGroupsByIntent } from './search.js';
 
 export const scanRouter = Router();
 
@@ -31,10 +31,18 @@ interface CollectionRow {
   phash: string | null;
 }
 
+type ValidatedGroup = Awaited<ReturnType<typeof searchGroupsByIntent>>['groups'][number];
+
+interface ValidatedGuess extends VisionScanResult {
+  /** True when a structured MusicBrainz release-group search found at least one match for this guess. */
+  validated: boolean;
+  /** The release groups that search found (empty when not validated). */
+  matchedGroups: ValidatedGroup[];
+}
+
 interface VisionSuggestionsResult {
-  suggestions: unknown[];
   vision?: {
-    guesses: VisionScanResult[];
+    guesses: ValidatedGuess[];
     suggestedQuery?: string;
   };
 }
@@ -151,23 +159,19 @@ scanRouter.post('/', async (req, res) => {
 
   logEvent('scan', requestId, 'Request complete', {
     matched: false,
-    suggestionCount: visionResult.suggestions.length,
     visionGuessCount: visionResult.vision?.guesses.length ?? 0,
+    validatedGuessCount: visionResult.vision?.guesses.filter((g) => g.validated).length ?? 0,
     totalMs: Date.now() - startedAt,
   });
-  if (visionResult.suggestions.length > 0 || visionResult.vision) {
-    res.json({
-      matched: false,
-      suggestions: visionResult.suggestions.length > 0 ? visionResult.suggestions : undefined,
-      vision: visionResult.vision,
-    });
+  if (visionResult.vision) {
+    res.json({ matched: false, vision: visionResult.vision });
   } else {
     res.json({ matched: false });
   }
 });
 
 const DEFAULT_VISION_DAILY_LIMIT = 5;
-const VALIDATION_SEARCH_LIMIT = 5;
+const VALIDATION_GROUP_LIMIT = 3;
 const DEFAULT_VALIDATION_GUESSES = 3;
 
 /**
@@ -194,7 +198,7 @@ async function getVisionSuggestions(
 
   if (!isAdminBypass && count > limit) {
     logEvent('scan', requestId, 'Vision call skipped — daily cap reached');
-    return { suggestions: [] };
+    return {};
   }
 
   try {
@@ -209,68 +213,58 @@ async function getVisionSuggestions(
     const [topGuess] = guesses;
     if (!topGuess) {
       logEvent('scan', requestId, 'No vision suggestion available — client will fall back to manual search');
-      return { suggestions: [] };
+      return {};
     }
 
-    const appName = process.env.MUSICBRAINZ_APP_NAME ?? 'sleevesnap';
     const validationGuessLimit = Math.max(
       1,
       Number(process.env.VISION_VALIDATION_GUESSES ?? DEFAULT_VALIDATION_GUESSES),
     );
-    const guessesToValidate = guesses.slice(0, validationGuessLimit);
 
-    type ValidatedRecord = Awaited<ReturnType<typeof searchReleasesByText>>[number];
-    const rankedResults: Array<{ record: ValidatedRecord; confidence: number; query: string }> = [];
-    for (const guess of guessesToValidate) {
-      const validationQuery = `${guess.artist} ${guess.title}`;
-      const validated = await searchReleasesByText(validationQuery, appName, VALIDATION_SEARCH_LIMIT);
-
-      if (validated.length === 0) {
-        logEvent(
-          'scan',
-          requestId,
-          'Vision guess did NOT validate — MusicBrainz returned no vinyl-format match for this query',
-          { query: validationQuery, guess },
-        );
-        continue;
-      }
-
-      logEvent('scan', requestId, 'Vision guess validated against MusicBrainz', {
-        query: validationQuery,
-        matchCount: validated.length,
-        top: `${validated[0]!.artist} - ${validated[0]!.title}`,
-        confidence: guess.confidence,
-      });
-
-      for (const record of validated) {
-        rankedResults.push({ record, confidence: guess.confidence, query: validationQuery });
-      }
-    }
-
-    const deduped = new Map<string, { record: ValidatedRecord; confidence: number }>();
-    for (const item of rankedResults) {
-      const key = item.record.musicBrainzId
-        ? `mbid:${item.record.musicBrainzId}`
-        : `${item.record.artist.toLowerCase()}::${item.record.title.toLowerCase()}`;
-      const existing = deduped.get(key);
-      if (!existing || item.confidence > existing.confidence) {
-        deduped.set(key, { record: item.record, confidence: item.confidence });
-      }
-    }
-
-    const suggestions = Array.from(deduped.values())
-      .sort((a, b) => b.confidence - a.confidence)
-      .map((item) => item.record);
+    // Validate every guess with the same structured (indexed) release-group
+    // search the user's own advanced search runs — a flat "artist title"
+    // string match here previously produced both false negatives (word-order
+    // noise) and false positives (title words matching the artist index).
+    // Searches run in parallel; a failure degrades that one guess to
+    // unvalidated rather than sinking the whole scan.
+    const validatedGuesses: ValidatedGuess[] = await Promise.all(
+      guesses.map(async (guess, index): Promise<ValidatedGuess> => {
+        if (index >= validationGuessLimit) {
+          return { ...guess, validated: false, matchedGroups: [] };
+        }
+        try {
+          const result = await searchGroupsByIntent(
+            { artist: guess.artist, title: guess.title },
+            VALIDATION_GROUP_LIMIT,
+          );
+          const validated = result.groups.length > 0;
+          logEvent('scan', requestId, validated
+            ? 'Vision guess validated against MusicBrainz'
+            : 'Vision guess did NOT validate — no release group matched', {
+            guess: `${guess.artist} - ${guess.title}`,
+            confidence: guess.confidence,
+            matchCount: result.groups.length,
+            top: result.groups[0] ? `${result.groups[0].artist} - ${result.groups[0].title}` : undefined,
+          });
+          return { ...guess, validated, matchedGroups: result.groups };
+        } catch (err) {
+          logWarn('scan', requestId, 'Vision guess validation search failed — treating as unvalidated', {
+            guess: `${guess.artist} - ${guess.title}`,
+            error: String(err),
+          });
+          return { ...guess, validated: false, matchedGroups: [] };
+        }
+      }),
+    );
 
     return {
-      suggestions,
       vision: {
-        guesses,
+        guesses: validatedGuesses,
         suggestedQuery: `${topGuess.artist} ${topGuess.title}`,
       },
     };
   } catch (err) {
     logWarn('scan', requestId, 'Vision-assisted identification failed', { error: String(err) });
-    return { suggestions: [] };
+    return {};
   }
 }

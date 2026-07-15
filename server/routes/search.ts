@@ -239,6 +239,18 @@ export async function searchReleasesByText(
     return gateway.searchReleasesByText(query, limit);
 }
 
+/**
+ * Structured (indexed) release-group search, shared with the scanner's
+ * vision-guess validation so a guess is validated with exactly the same
+ * query the user's own advanced search would run.
+ */
+export async function searchGroupsByIntent(
+    intent: SearchGroupsRequest['intent'],
+    pageSize: number,
+) {
+    return gateway.searchGroups({ mode: 'indexed', intent, page: 1, pageSize });
+}
+
 function isVinylFormat(format: string | undefined): boolean {
     if (!format) return false;
     return /vinyl|\blp\b/i.test(format);
