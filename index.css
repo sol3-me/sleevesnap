@@ -76,3 +76,15 @@ html {
 ::-webkit-scrollbar-thumb:hover {
   background: #3c3c44;
 }
+
+/* Mobile browsers (iOS Safari especially) render an overlay scrollbar that
+   ignores ::-webkit-scrollbar styling and sits on top of content rather than
+   reserving space for it — poor fit for the Scanner's app-like fixed screens.
+   Scrollability is unaffected; only the rail is hidden. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

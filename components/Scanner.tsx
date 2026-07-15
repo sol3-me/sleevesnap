@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AdvancedSearchFields, AdvancedSearchFieldsValue } from '../components/AdvancedSearchFields';
 import { AiGuessSearchFields } from '../components/AiGuessSearchFields';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
-import { bestGuess, guessToFields } from '../lib/aiGuessFields';
+import { bestGuess, confidenceTier, confidenceTierLabel, guessToFields } from '../lib/aiGuessFields';
 import { triggerImageDownload } from '../lib/downloadImage';
 import { logEvent, logWarn } from '../services/telemetry';
 import {
@@ -119,6 +119,10 @@ export const Scanner: React.FC<ScannerProps> = ({
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [loadingGroupIds, setLoadingGroupIds] = useState<Record<string, true>>({});
   const [aiGuesses, setAiGuesses] = useState<ScanVisionSuggestion[]>([]);
+  // Collapsed to a one-line summary once results exist, so the results the
+  // user just scanned for are visible without scrolling past the search
+  // form that produced them. Expandable again via "Edit".
+  const [isSearchFormExpanded, setIsSearchFormExpanded] = useState(true);
 
   // scan history state — synchronous ref alongside the state so a freshly
   // created entry's id is available immediately to the search that follows
@@ -394,6 +398,7 @@ export const Scanner: React.FC<ScannerProps> = ({
       setLoadingGroupIds({});
       setSearchGroups(page.groups);
       setStage('search_results');
+      if (page.groups.length > 0) setIsSearchFormExpanded(false);
 
       // Best-effort — a failure here shouldn't block showing the results just fetched.
       if (scanHistoryIdRef.current) {
@@ -433,6 +438,7 @@ export const Scanner: React.FC<ScannerProps> = ({
       setLoadingGroupIds({});
       setSearchGroups(guess.matchedGroups);
       setStage('search_results');
+      setIsSearchFormExpanded(false);
       if (scanHistoryIdRef.current) {
         appendScanHistorySearch(scanHistoryIdRef.current, intentFromFields(fields), guess.matchedGroups).catch((err) => {
           logWarn('scanner', 'Failed to append search to scan history', { error: err instanceof Error ? err.message : String(err) });
@@ -504,6 +510,7 @@ export const Scanner: React.FC<ScannerProps> = ({
     setExpandedGroups({});
     setLoadingGroupIds({});
     setAiGuesses([]);
+    setIsSearchFormExpanded(true);
     setError(null);
     setStage('capture');
   };
@@ -547,6 +554,7 @@ export const Scanner: React.FC<ScannerProps> = ({
       });
       setSearchGroups(lastSearch.resultGroups);
       setStage('search_results');
+      setIsSearchFormExpanded(lastSearch.resultGroups.length === 0);
     } else {
       const topGuess = bestGuess(entry.visionGuesses);
       setSearchFields(topGuess ? guessToFields(topGuess) : emptySearchFields);
@@ -838,7 +846,10 @@ export const Scanner: React.FC<ScannerProps> = ({
 
           <div className="flex gap-3 mt-auto">
             <button
-              onClick={() => setStage('no_match')}
+              onClick={() => {
+                setIsSearchFormExpanded(true);
+                setStage('no_match');
+              }}
               className="flex-1 py-3 rounded-full border border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 font-medium text-sm transition-colors"
             >
               Not quite — search
@@ -855,68 +866,103 @@ export const Scanner: React.FC<ScannerProps> = ({
 
       {/* ── No match / manual search ── */}
       {(stage === 'no_match' || stage === 'searching' || stage === 'search_results') && (
-        <div className="flex-1 flex flex-col gap-4 overflow-y-auto">
-          {/* Thumbnail of the captured (or resumed history) image */}
-          {displayImageSrc && (
-            <div className="relative w-28 mx-auto">
-              <img
-                src={displayImageSrc}
-                alt="Captured sleeve"
-                className="w-28 h-28 object-contain rounded-xl bg-vinyl-900"
-              />
-              {capturedImage && (
-                <button
-                  onClick={downloadCapturedImage}
-                  aria-label="Download photo"
-                  className="absolute top-1 right-1 p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
-                >
-                  <DownloadIcon />
-                </button>
+        <div className="flex-1 flex flex-col gap-4 overflow-y-auto no-scrollbar">
+          {/* Captured sleeve + a contextual summary in place of the old static
+              blurb — shows the actual top result (or best guess, or a plain
+              fallback) so there's something useful to read at a glance,
+              instead of a generic sentence that never changed. */}
+          {(displayImageSrc || searchGroups.length > 0 || aiGuesses.length > 0) && (
+            <div className="flex items-center gap-3">
+              {displayImageSrc && (
+                <div className="relative w-20 h-20 shrink-0">
+                  <img
+                    src={displayImageSrc}
+                    alt="Captured sleeve"
+                    className="w-20 h-20 object-contain rounded-xl bg-vinyl-900"
+                  />
+                  {capturedImage && (
+                    <button
+                      onClick={downloadCapturedImage}
+                      aria-label="Download photo"
+                      className="absolute -top-1 -right-1 p-1 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
+                    >
+                      <DownloadIcon />
+                    </button>
+                  )}
+                </div>
               )}
+              <div className="flex-1 min-w-0">
+                {searchGroups.length > 0 ? (
+                  <>
+                    <p className="text-[11px] text-gray-500 uppercase tracking-wide">
+                      Top match{searchGroups.length > 1 ? ` · ${searchGroups.length} results` : ''}
+                    </p>
+                    <p className="text-sm font-semibold text-white truncate">{searchGroups[0]!.title}</p>
+                    <p className="text-xs text-gray-400 truncate">
+                      {searchGroups[0]!.artist}
+                      {searchGroups[0]!.firstReleaseDate ? ` · ${searchGroups[0]!.firstReleaseDate.slice(0, 4)}` : ''}
+                    </p>
+                  </>
+                ) : aiGuesses.length > 0 && bestGuess(aiGuesses) ? (
+                  <>
+                    <p className="text-[11px] text-gray-500 uppercase tracking-wide">
+                      Best guess · {confidenceTierLabel(confidenceTier(bestGuess(aiGuesses)!.confidence))}
+                    </p>
+                    <p className="text-sm font-semibold text-white truncate">{bestGuess(aiGuesses)!.title}</p>
+                    <p className="text-xs text-gray-400 truncate">{bestGuess(aiGuesses)!.artist}</p>
+                  </>
+                ) : (
+                  <p className="text-sm text-gray-300">Couldn't identify this record. Search below to find it.</p>
+                )}
+              </div>
             </div>
-          )}
-
-          {searchGroups.length > 0 ? (
-            <p className="text-gray-300 text-sm">
-              We searched using the same MusicBrainz release-group flow as Discover. Expand a result to pick the exact release.
-            </p>
-          ) : (
-            <p className="text-gray-300 text-sm">
-              Couldn't identify this record in your collection. Do you know what album it is?
-            </p>
           )}
 
           {error && (
             <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>
           )}
 
-          {/* Search fields — AI-annotated when we have guesses, plain otherwise */}
-          <div className="flex flex-col gap-2">
-            {aiGuesses.length > 0 ? (
-              <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
-                <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">AI suggestions · ✓ found on MusicBrainz</p>
-                <AiGuessSearchFields
-                  guesses={aiGuesses}
-                  value={searchFields}
-                  onChange={setSearchFields}
-                  onSubmit={handleSearch}
-                  onApplyGuess={applyGuess}
-                />
-                <p className="text-[11px] text-gray-500 mt-2">
-                  AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
-                </p>
-              </div>
-            ) : (
-              <AdvancedSearchFields value={searchFields} onChange={setSearchFields} onSubmit={handleSearch} />
-            )}
+          {/* Search fields — collapses to a one-line summary once there are
+              results, so the results are visible without scrolling past the
+              form that produced them. */}
+          {isSearchFormExpanded ? (
+            <div className="flex flex-col gap-2">
+              {aiGuesses.length > 0 ? (
+                <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+                  <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">AI suggestions · ✓ found on MusicBrainz</p>
+                  <AiGuessSearchFields
+                    guesses={aiGuesses}
+                    value={searchFields}
+                    onChange={setSearchFields}
+                    onSubmit={handleSearch}
+                    onApplyGuess={applyGuess}
+                  />
+                  <p className="text-[11px] text-gray-500 mt-2">
+                    AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
+                  </p>
+                </div>
+              ) : (
+                <AdvancedSearchFields value={searchFields} onChange={setSearchFields} onSubmit={handleSearch} />
+              )}
+              <button
+                onClick={handleSearch}
+                disabled={stage === 'searching' || !hasAnyIntentField(searchFields)}
+                className="bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-4 py-3 rounded-xl font-semibold text-sm disabled:opacity-50 transition-colors"
+              >
+                {stage === 'searching' ? '…' : 'Search'}
+              </button>
+            </div>
+          ) : (
             <button
-              onClick={handleSearch}
-              disabled={stage === 'searching' || !hasAnyIntentField(searchFields)}
-              className="bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-4 py-3 rounded-xl font-semibold text-sm disabled:opacity-50 transition-colors"
+              onClick={() => setIsSearchFormExpanded(true)}
+              className="flex items-center justify-between gap-2 w-full bg-vinyl-900/70 border border-white/10 rounded-xl px-4 py-3 text-left hover:bg-vinyl-900 transition-colors"
             >
-              {stage === 'searching' ? '…' : 'Search'}
+              <span className="text-sm text-gray-300 truncate">
+                {[searchFields.title, searchFields.artist, searchFields.year].filter(Boolean).join(' · ')}
+              </span>
+              <span className="text-xs text-vinyl-accent shrink-0 font-medium">Edit search</span>
             </button>
-          </div>
+          )}
 
           {/* Search results — no flex-1/overflow here; the stage container above
               is the single scroll region, so results are never starved of
@@ -957,7 +1003,7 @@ export const Scanner: React.FC<ScannerProps> = ({
 
       {/* ── Scan history (past AI-assisted scans) ── */}
       {stage === 'history' && (
-        <div className="flex-1 flex flex-col gap-3 overflow-y-auto">
+        <div className="flex-1 flex flex-col gap-3 overflow-y-auto no-scrollbar">
           <button
             onClick={() => setStage('capture')}
             className="self-start text-sm text-gray-400 hover:text-white"
