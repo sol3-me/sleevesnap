@@ -6,7 +6,6 @@ import { fileURLToPath } from 'url';
 import { initDb } from './db.js';
 import { createAuthMiddleware } from './auth.js';
 import { createFirebaseVerifier } from './firebaseVerifier.js';
-import { legacyClaimMiddleware } from './legacyClaim.js';
 import { collectionRouter } from './routes/collection.js';
 import { scanRouter } from './routes/scan.js';
 import { searchRouter } from './routes/search.js';
@@ -54,10 +53,7 @@ if (!FIREBASE_PROJECT_ID) {
   );
   process.exit(1);
 }
-const requireAuth = [
-  createAuthMiddleware(createFirebaseVerifier(FIREBASE_PROJECT_ID)),
-  legacyClaimMiddleware,
-];
+const requireAuth = createAuthMiddleware(createFirebaseVerifier(FIREBASE_PROJECT_ID));
 
 // API routes
 app.use('/api/collection', apiLimiter, requireAuth, collectionRouter);
