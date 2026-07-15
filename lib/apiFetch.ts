@@ -14,5 +14,12 @@ export function setApiTokenGetter(getter: ApiTokenGetter): void {
 }
 
 export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
-  return fetch(input, init);
+  const token = await getToken();
+  if (!token) {
+    return fetch(input, init);
+  }
+
+  const headers = new Headers(init?.headers);
+  headers.set('Authorization', `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
 }
