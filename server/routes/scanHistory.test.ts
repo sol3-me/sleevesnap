@@ -13,9 +13,17 @@ const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sleevesnap-scan-histor
 process.env.CACHE_DB_PATH = path.join(scratchDir, 'cache.db');
 
 const { initDb } = await import('../db.js');
+const { createAuthMiddleware } = await import('../auth.js');
 const { createScanHistoryRouter } = await import('./scanHistory.js');
 
 initDb();
+
+// Two fixed identities so tests can exercise per-user isolation. The
+// middleware itself is covered by auth.test.ts.
+const USERS: Record<string, { uid: string; email: string }> = {
+  'token-a': { uid: 'user-a', email: 'a@example.com' },
+  'token-b': { uid: 'user-b', email: 'b@example.com' },
+};
 
 const TINY_BASE64_JPEG = Buffer.from('fake-jpeg-bytes').toString('base64');
 
@@ -39,7 +47,15 @@ function createFakeStorage(): BlobStorageProvider & { keys: Set<string> } {
 async function startTestServer(storage: BlobStorageProvider, limit?: number): Promise<{ server: http.Server; port: number }> {
   const app = express();
   app.use(express.json({ limit: '15mb' }));
-  app.use('/api/scan-history', createScanHistoryRouter(storage, limit));
+  app.use(
+    '/api/scan-history',
+    createAuthMiddleware(async (token) => {
+      const user = USERS[token];
+      if (!user) throw new Error('unknown token');
+      return user;
+    }),
+    createScanHistoryRouter(storage, limit),
+  );
 
   return await new Promise((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
@@ -69,9 +85,15 @@ async function requestJson(
   path: string,
   method: 'GET' | 'POST' | 'DELETE',
   body?: unknown,
+  token = 'token-a',
 ): Promise<{ statusCode: number; json: any }> {
   return await new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : undefined;
+    const headers: Record<string, string | number> = { authorization: `Bearer ${token}` };
+    if (payload) {
+      headers['content-type'] = 'application/json';
+      headers['content-length'] = Buffer.byteLength(payload);
+    }
 
     const req = http.request(
       {
@@ -79,9 +101,7 @@ async function requestJson(
         port,
         path,
         method,
-        headers: payload
-          ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
-          : undefined,
+        headers,
       },
       (res) => {
         let data = '';
@@ -221,6 +241,73 @@ test('DELETE /api/scan-history/:id returns 404 for an unknown id', async () => {
   try {
     const res = await requestJson(port, '/api/scan-history/does-not-exist', 'DELETE');
     assert.equal(res.statusCode, 404);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("a user's scan history is invisible to other users", async () => {
+  const storage = createFakeStorage();
+  const { server, port } = await startTestServer(storage);
+
+  try {
+    const created = await requestJson(port, '/api/scan-history', 'POST', { capturedImage: TINY_BASE64_JPEG });
+    const id = created.json.id;
+
+    const listAsB = await requestJson(port, '/api/scan-history', 'GET', undefined, 'token-b');
+    assert.ok(
+      !listAsB.json.entries.some((e: any) => e.id === id),
+      "user A's scan history entries must not appear in user B's list",
+    );
+
+    const fetchAsB = await requestJson(port, `/api/scan-history/${id}`, 'GET', undefined, 'token-b');
+    assert.equal(fetchAsB.statusCode, 404, "fetching another user's entry by id must look like it doesn't exist");
+
+    const deleteAsB = await requestJson(port, `/api/scan-history/${id}`, 'DELETE', undefined, 'token-b');
+    assert.equal(deleteAsB.statusCode, 404);
+
+    const stillThere = await requestJson(port, `/api/scan-history/${id}`, 'GET');
+    assert.equal(stillThere.statusCode, 200, "user B's delete attempt must not remove user A's entry");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("appending a search to another user's entry is rejected", async () => {
+  const storage = createFakeStorage();
+  const { server, port } = await startTestServer(storage);
+
+  try {
+    const created = await requestJson(port, '/api/scan-history', 'POST', { capturedImage: TINY_BASE64_JPEG });
+
+    const res = await requestJson(
+      port,
+      `/api/scan-history/${created.json.id}/searches`,
+      'POST',
+      { intent: { title: 'x' }, resultGroups: [] },
+      'token-b',
+    );
+    assert.equal(res.statusCode, 404);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("pruning is per-user — one user's new scans never evict another user's history", async () => {
+  const storage = createFakeStorage();
+  const { server, port } = await startTestServer(storage, 2);
+
+  try {
+    const aFirst = await requestJson(port, '/api/scan-history', 'POST', { capturedImage: TINY_BASE64_JPEG });
+    const aSecond = await requestJson(port, '/api/scan-history', 'POST', { capturedImage: TINY_BASE64_JPEG });
+
+    // B creating entries must not push A over the limit.
+    await requestJson(port, '/api/scan-history', 'POST', { capturedImage: TINY_BASE64_JPEG }, 'token-b');
+
+    const aList = await requestJson(port, '/api/scan-history', 'GET');
+    const aIds = aList.json.entries.map((e: any) => e.id);
+    assert.ok(aIds.includes(aFirst.json.id), "user B's scan must not evict user A's oldest entry");
+    assert.ok(aIds.includes(aSecond.json.id));
   } finally {
     await closeServer(server);
   }
