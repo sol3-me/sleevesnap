@@ -3,6 +3,7 @@ import {
   LabelSearchEntity,
   ScanHistoryCreatePayload,
   ScanHistoryEntry,
+  ScanQuota,
   ScanResponse,
   ScanUploadPayload,
   SearchEntityPage,
@@ -110,6 +111,15 @@ export const scanImage = async (base64Image: string): Promise<ScanResponse> => {
     throw new Error(err.error ?? 'Failed to scan image.');
   }
 
+  return res.json();
+};
+
+/** Reads the user's remaining daily AI-scan allowance — never triggers a scan itself. */
+export const getScanQuota = async (): Promise<ScanQuota> => {
+  const res = await fetch('/api/scan/quota');
+  if (!res.ok) {
+    throw new Error(`Failed to load scan quota (${res.status})`);
+  }
   return res.json();
 };
 

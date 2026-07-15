@@ -132,6 +132,13 @@ export interface ScanVisionSuggestion {
   matchedGroups?: SearchResultGroup[];
 }
 
+/** Response from GET /api/scan/quota — the user's remaining daily AI-scan allowance. */
+export interface ScanQuota {
+  used: number;
+  limit: number;
+  remaining: number;
+}
+
 export interface ScanVisionMetadata {
   guesses: ScanVisionSuggestion[];
   suggestedQuery?: string;

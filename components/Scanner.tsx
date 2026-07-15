@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AdvancedSearchFields, AdvancedSearchFieldsValue } from '../components/AdvancedSearchFields';
 import { AiGuessSearchFields } from '../components/AiGuessSearchFields';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
+import { ScanQuotaBanner } from '../components/ScanQuotaBanner';
 import { bestGuess, confidenceTier, confidenceTierLabel, guessToFields } from '../lib/aiGuessFields';
 import { triggerImageDownload } from '../lib/downloadImage';
 import { logEvent, logWarn } from '../services/telemetry';
@@ -10,6 +11,7 @@ import {
   createScanHistoryEntry,
   deleteScanHistoryEntry,
   getReleaseGroupReleases,
+  getScanQuota,
   listScanHistory,
   scanImage,
   searchVinylReleaseGroups,
@@ -17,6 +19,7 @@ import {
 } from '../services/vinylService';
 import {
   ScanHistoryEntry,
+  ScanQuota,
   ScanVisionSuggestion,
   SearchGroupReleases,
   SearchIntent,
@@ -131,6 +134,16 @@ export const Scanner: React.FC<ScannerProps> = ({
   const [resumedImageUrl, setResumedImageUrl] = useState<string | null>(null);
   const [historyEntries, setHistoryEntries] = useState<ScanHistoryEntry[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  const [quota, setQuota] = useState<ScanQuota | null>(null);
+  const refreshQuota = useCallback(() => {
+    getScanQuota()
+      .then(setQuota)
+      .catch((err) => logWarn('scanner', 'Failed to load scan quota', { error: err instanceof Error ? err.message : String(err) }));
+  }, []);
+  useEffect(() => {
+    refreshQuota();
+  }, [refreshQuota]);
 
   const displayImageSrc = capturedImage ? `data:image/jpeg;base64,${capturedImage}` : resumedImageUrl;
 
@@ -345,6 +358,7 @@ export const Scanner: React.FC<ScannerProps> = ({
     try {
       const result = await scanImage(base64);
       const ms = Math.round(performance.now() - startedAt);
+      refreshQuota();
       if (result.matched === true) {
         logEvent('scanner', 'Matched existing collection item', {
           artist: result.record.artist,
@@ -610,6 +624,13 @@ export const Scanner: React.FC<ScannerProps> = ({
           Close
         </button>
       </div>
+
+      {/* Daily AI-scan allowance — hidden while the camera viewfinder is open
+          (no room, and the user is mid-capture) and during the brief
+          analyzing/saving overlays. */}
+      {quota && stage !== 'analyzing' && stage !== 'saving' && !(stage === 'capture' && isStreaming) && (
+        <ScanQuotaBanner quota={quota} onViewHistory={() => void openHistory()} />
+      )}
 
       {/* ── Chooser (capture stage, camera not yet open, nothing captured) ── */}
       {stage === 'capture' && !isStreaming && !capturedImage && (
