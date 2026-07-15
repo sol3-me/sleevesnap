@@ -853,7 +853,7 @@ export const Scanner: React.FC<ScannerProps> = ({
 
       {/* ── No match / manual search ── */}
       {(stage === 'no_match' || stage === 'searching' || stage === 'search_results') && (
-        <div className="flex-1 flex flex-col gap-4 overflow-hidden">
+        <div className="flex-1 flex flex-col gap-4 overflow-y-auto">
           {/* Thumbnail of the captured (or resumed history) image */}
           {displayImageSrc && (
             <div className="relative w-28 mx-auto">
@@ -935,8 +935,10 @@ export const Scanner: React.FC<ScannerProps> = ({
             </button>
           </div>
 
-          {/* Search results */}
-          <div className="flex-1 overflow-y-auto space-y-2">
+          {/* Search results — no flex-1/overflow here; the stage container above
+              is the single scroll region, so results are never starved of
+              height by AI-suggestion chips or the (4-field) search form above them. */}
+          <div className="space-y-2">
             <ReleaseGroupResultsList
               groups={searchGroups}
               groupReleases={groupReleases}
@@ -972,7 +974,7 @@ export const Scanner: React.FC<ScannerProps> = ({
 
       {/* ── Scan history (past AI-assisted scans) ── */}
       {stage === 'history' && (
-        <div className="flex-1 flex flex-col gap-3 overflow-hidden">
+        <div className="flex-1 flex flex-col gap-3 overflow-y-auto">
           <button
             onClick={() => setStage('capture')}
             className="self-start text-sm text-gray-400 hover:text-white"
@@ -989,7 +991,7 @@ export const Scanner: React.FC<ScannerProps> = ({
           ) : historyEntries.length === 0 ? (
             <p className="text-gray-500 text-sm text-center py-6">No past scans yet.</p>
           ) : (
-            <div className="flex-1 overflow-y-auto space-y-2">
+            <div className="space-y-2">
               {historyEntries.map((entry) => {
                 const topGuess = entry.visionGuesses[0];
                 const label = topGuess
