@@ -1,3 +1,4 @@
+import { apiFetch } from '../lib/apiFetch';
 import {
   ArtistSearchEntity,
   LabelSearchEntity,
@@ -100,7 +101,7 @@ function setCached<T>(key: string, value: T, ttl = CACHE_TTL_MS): void {
  * to search manually.
  */
 export const scanImage = async (base64Image: string): Promise<ScanResponse> => {
-  const res = await fetch('/api/scan', {
+  const res = await apiFetch('/api/scan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ base64Image }),
@@ -116,7 +117,7 @@ export const scanImage = async (base64Image: string): Promise<ScanResponse> => {
 
 /** Reads the user's remaining daily AI-scan allowance — never triggers a scan itself. */
 export const getScanQuota = async (): Promise<ScanQuota> => {
-  const res = await fetch('/api/scan/quota');
+  const res = await apiFetch('/api/scan/quota');
   if (!res.ok) {
     throw new Error(`Failed to load scan quota (${res.status})`);
   }
@@ -128,7 +129,7 @@ export const getScanQuota = async (): Promise<ScanQuota> => {
  * to the collection and stores the perceptual hash for future matching.
  */
 export const submitScan = async (payload: ScanUploadPayload): Promise<VinylRecord> => {
-  const res = await fetch('/api/scans', {
+  const res = await apiFetch('/api/scans', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -151,7 +152,7 @@ export const searchVinylDatabase = async (
   query: string,
   includeOtherFormats = false,
 ): Promise<VinylRecord[]> => {
-  const res = await fetch('/api/search', {
+  const res = await apiFetch('/api/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, includeOtherFormats }),
@@ -212,7 +213,7 @@ export const searchVinylReleaseGroups = async (
     return cached;
   }
 
-  const res = await fetch('/api/search/groups', {
+  const res = await apiFetch('/api/search/groups', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
@@ -255,7 +256,7 @@ export const getReleaseGroupReleases = async (
     return cached;
   }
 
-  const res = await fetch(`/api/search/groups/${encodeURIComponent(releaseGroupId)}/releases`);
+  const res = await apiFetch(`/api/search/groups/${encodeURIComponent(releaseGroupId)}/releases`);
   if (!res.ok) {
     return {
       releaseGroupId,
@@ -288,7 +289,7 @@ export const searchArtistEntities = async (
     return cached;
   }
 
-  const res = await fetch('/api/search/artists', {
+  const res = await apiFetch('/api/search/artists', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -326,7 +327,7 @@ export const searchLabelEntities = async (
     return cached;
   }
 
-  const res = await fetch('/api/search/labels', {
+  const res = await apiFetch('/api/search/labels', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -350,7 +351,7 @@ export const searchLabelEntities = async (
  * it can be revisited later without spending more vision-API budget.
  */
 export const createScanHistoryEntry = async (payload: ScanHistoryCreatePayload): Promise<ScanHistoryEntry> => {
-  const res = await fetch('/api/scan-history', {
+  const res = await apiFetch('/api/scan-history', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -370,7 +371,7 @@ export const appendScanHistorySearch = async (
   intent: SearchIntent,
   resultGroups: SearchResultGroup[],
 ): Promise<ScanHistoryEntry> => {
-  const res = await fetch(`/api/scan-history/${encodeURIComponent(id)}/searches`, {
+  const res = await apiFetch(`/api/scan-history/${encodeURIComponent(id)}/searches`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ intent, resultGroups }),
@@ -386,7 +387,7 @@ export const appendScanHistorySearch = async (
 
 /** Lists saved AI-assisted scans, newest first. */
 export const listScanHistory = async (): Promise<ScanHistoryEntry[]> => {
-  const res = await fetch('/api/scan-history');
+  const res = await apiFetch('/api/scan-history');
   if (!res.ok) {
     throw new Error(`Failed to load scan history (${res.status})`);
   }
@@ -396,7 +397,7 @@ export const listScanHistory = async (): Promise<ScanHistoryEntry[]> => {
 
 /** Fetches a single saved scan (full search history included). */
 export const getScanHistoryEntry = async (id: string): Promise<ScanHistoryEntry> => {
-  const res = await fetch(`/api/scan-history/${encodeURIComponent(id)}`);
+  const res = await apiFetch(`/api/scan-history/${encodeURIComponent(id)}`);
   if (!res.ok) {
     throw new Error(`Failed to load scan history entry (${res.status})`);
   }
@@ -405,7 +406,7 @@ export const getScanHistoryEntry = async (id: string): Promise<ScanHistoryEntry>
 
 /** Deletes a saved scan and its stored photo. */
 export const deleteScanHistoryEntry = async (id: string): Promise<void> => {
-  const res = await fetch(`/api/scan-history/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/scan-history/${encodeURIComponent(id)}`, { method: 'DELETE' });
   if (!res.ok) {
     throw new Error(`Failed to delete scan history entry (${res.status})`);
   }
