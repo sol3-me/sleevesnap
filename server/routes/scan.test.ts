@@ -418,6 +418,63 @@ test('POST /api/scan validates each guess with a structured release-group search
   }
 });
 
+test('POST /api/scan reports notAlbumCover and runs zero validation searches when the AI declines a non-sleeve photo', async () => {
+  process.env.GEMINI_API_KEY = 'test-key';
+  let musicBrainzCalled = false;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = urlOf(input);
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return jsonResponse({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: JSON.stringify({ isAlbumCover: false, guesses: [] }) }],
+            },
+          },
+        ],
+      });
+    }
+    if (url.toLowerCase().includes('musicbrainz.org')) {
+      musicBrainzCalled = true;
+      return jsonResponse({ count: 0, 'release-groups': [] });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  }) as typeof fetch;
+
+  const { server, port } = await startTestServer();
+  try {
+    const res = await postScan(port, TINY_JPEG_BASE64);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.json, { matched: false, notAlbumCover: true });
+    assert.equal(musicBrainzCalled, false, 'a declined non-album photo must not trigger any validation search');
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('POST /api/scan still counts a declined non-album photo against the daily vision quota', async () => {
+  process.env.GEMINI_API_KEY = 'test-key';
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = urlOf(input);
+    if (url.includes('generativelanguage.googleapis.com')) {
+      return jsonResponse({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ isAlbumCover: false, guesses: [] }) }] } }],
+      });
+    }
+    throw new Error(`Unexpected fetch to ${url}`);
+  }) as typeof fetch;
+
+  const { server, port } = await startTestServer();
+  try {
+    await postScan(port, TINY_JPEG_BASE64);
+    const quota = await requestJson(port, '/api/scan/quota', 'GET');
+    assert.equal(quota.json.used, 1, 'the vision call still happened, so it should count against the quota');
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test('GET /api/scan/quota reports the default limit and 0 used when no scans have run today', async () => {
   const { server, port } = await startTestServer();
   try {

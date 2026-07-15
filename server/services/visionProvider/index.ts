@@ -9,6 +9,13 @@ export interface VisionScanResult {
   confidence: number;
 }
 
+export interface VisionIdentifyResult {
+  /** False when the AI determined the photo does not show a record sleeve at all. */
+  isAlbumCover: boolean;
+  /** Candidate identifications, sorted by confidence descending. Empty when isAlbumCover is false. */
+  guesses: VisionScanResult[];
+}
+
 const MAX_WIDTH = 1024;
 const DEFAULT_MAX_GUESSES = 5;
 const DEFAULT_MIN_GUESSES = 3;
@@ -31,29 +38,41 @@ function getGuessLimits() {
 
 function buildPrompt(minGuesses: number, maxGuesses: number) {
   return (
-    'Identify the single vinyl record sleeve shown in this photo. Return a JSON array of candidate guesses, ' +
-    `sorted by confidence descending, with at least ${minGuesses} guesses when possible and up to ${maxGuesses} guesses if uncertain. ` +
-    "Each guess must include artist name, album title, and confidence (0 to 1). " +
-    'If you can determine the release year or genre, include them. Ignore background objects — there is exactly one record sleeve to identify.'
+    'You are analyzing a single photo to identify a vinyl record sleeve (front or back album cover art). ' +
+    'First decide whether the photo actually shows a vinyl/album record sleeve. If it does NOT — for example ' +
+    'it shows a person, an animal, a random object, or anything else that is not album cover art — set ' +
+    '"isAlbumCover" to false and return an empty "guesses" array. Do not invent an artist or title for a ' +
+    'non-album photo, no matter how tempting; a wrong guess wastes the user\'s limited daily scan allowance. ' +
+    `If it DOES show a record sleeve, set "isAlbumCover" to true and fill "guesses" with a JSON array of ` +
+    `candidate identifications, sorted by confidence descending, with at least ${minGuesses} guesses when ` +
+    `possible and up to ${maxGuesses} guesses if uncertain. Each guess must include artist name, album title, ` +
+    'and confidence (0 to 1). If you can determine the release year or genre, include them. Ignore background ' +
+    'objects — focus only on the record sleeve itself.'
   );
 }
 
-function buildResultSchema(minGuesses: number, maxGuesses: number) {
+function buildResultSchema(maxGuesses: number) {
   return {
-    type: 'array',
-    minItems: minGuesses,
-    maxItems: maxGuesses,
-    items: {
-      type: 'object',
-      properties: {
-        artist: { type: 'string' },
-        title: { type: 'string' },
-        year: { type: 'string' },
-        genre: { type: 'string' },
-        confidence: { type: 'number' },
+    type: 'object',
+    properties: {
+      isAlbumCover: { type: 'boolean' },
+      guesses: {
+        type: 'array',
+        maxItems: maxGuesses,
+        items: {
+          type: 'object',
+          properties: {
+            artist: { type: 'string' },
+            title: { type: 'string' },
+            year: { type: 'string' },
+            genre: { type: 'string' },
+            confidence: { type: 'number' },
+          },
+          required: ['artist', 'title', 'confidence'],
+        },
       },
-      required: ['artist', 'title', 'confidence'],
     },
+    required: ['isAlbumCover', 'guesses'],
   };
 }
 
@@ -70,17 +89,48 @@ async function resizeForVision(imageBuffer: Buffer): Promise<Buffer> {
   return image.getBuffer('image/jpeg');
 }
 
-/** Parses a provider's raw JSON-string reply into normalized, confidence-sorted guesses. */
-function parseResults(raw: string | undefined, requestId: string, provider: string, maxGuesses: number): VisionScanResult[] {
+/**
+ * Parses a provider's raw JSON-string reply into a normalized result.
+ *
+ * Expects the `{ isAlbumCover, guesses }` shape the schema now requests, but
+ * defensively also accepts a bare guesses array or a single bare guess
+ * object (the old contract) so a model that ignores the schema still
+ * degrades to "treat as an album cover" rather than silently dropping
+ * guesses. Only an explicit `isAlbumCover: false` is treated as a decline —
+ * anything else defaults to true, since falsely declining a real sleeve
+ * photo is worse than an unnecessary search.
+ */
+function parseResults(raw: string | undefined, requestId: string, provider: string, maxGuesses: number): VisionIdentifyResult {
+  const ambiguous: VisionIdentifyResult = { isAlbumCover: true, guesses: [] };
+
   if (!raw) {
     logWarn(SCOPE, requestId, `${provider} returned an empty response body`);
-    return [];
+    return ambiguous;
   }
 
   try {
-    const parsed = JSON.parse(raw) as Partial<VisionScanResult> | Array<Partial<VisionScanResult>>;
-    const candidates = Array.isArray(parsed) ? parsed : [parsed];
+    const parsed = JSON.parse(raw) as unknown;
 
+    let isAlbumCover = true;
+    let rawGuesses: unknown;
+    if (Array.isArray(parsed)) {
+      rawGuesses = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+      const obj = parsed as { isAlbumCover?: unknown; guesses?: unknown };
+      if (typeof obj.isAlbumCover === 'boolean') {
+        isAlbumCover = obj.isAlbumCover;
+      }
+      rawGuesses = Array.isArray(obj.guesses) ? obj.guesses : [parsed];
+    } else {
+      rawGuesses = [];
+    }
+
+    if (!isAlbumCover) {
+      logEvent(SCOPE, requestId, `${provider} determined the photo is not a record sleeve`);
+      return { isAlbumCover: false, guesses: [] };
+    }
+
+    const candidates = (rawGuesses as Array<Partial<VisionScanResult>>) ?? [];
     const cleaned = candidates
       .filter((candidate) => typeof candidate.artist === 'string' && typeof candidate.title === 'string')
       .map((candidate) => ({
@@ -96,10 +146,7 @@ function parseResults(raw: string | undefined, requestId: string, provider: stri
       .filter((candidate) => candidate.artist.length > 0 && candidate.title.length > 0);
 
     if (cleaned.length === 0) {
-      logWarn(SCOPE, requestId, `${provider} response was missing required fields`, {
-        raw: raw.slice(0, 300),
-      });
-      return [];
+      return ambiguous;
     }
 
     const deduped = new Map<string, VisionScanResult>();
@@ -111,21 +158,24 @@ function parseResults(raw: string | undefined, requestId: string, provider: stri
       }
     }
 
-    return Array.from(deduped.values())
-      .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, maxGuesses);
+    return {
+      isAlbumCover: true,
+      guesses: Array.from(deduped.values())
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, maxGuesses),
+    };
   } catch {
     logWarn(SCOPE, requestId, `${provider} response was not valid JSON`, { raw: raw.slice(0, 300) });
-    return [];
+    return ambiguous;
   }
 }
 
-async function identifyWithGemini(imageBuffer: Buffer, requestId: string): Promise<VisionScanResult[]> {
+async function identifyWithGemini(imageBuffer: Buffer, requestId: string): Promise<VisionIdentifyResult> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) return { isAlbumCover: true, guesses: [] };
   const { min, max } = getGuessLimits();
   const prompt = buildPrompt(min, max);
-  const resultSchema = buildResultSchema(min, max);
+  const resultSchema = buildResultSchema(max);
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
   const res = await fetch(url, {
@@ -164,12 +214,12 @@ async function identifyWithGemini(imageBuffer: Buffer, requestId: string): Promi
   return parseResults(data.candidates?.[0]?.content?.parts?.[0]?.text, requestId, 'Gemini', max);
 }
 
-async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promise<VisionScanResult[]> {
+async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promise<VisionIdentifyResult> {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return [];
+  if (!apiKey) return { isAlbumCover: true, guesses: [] };
   const { min, max } = getGuessLimits();
   const prompt = buildPrompt(min, max);
-  const resultSchema = buildResultSchema(min, max);
+  const resultSchema = buildResultSchema(max);
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -217,9 +267,13 @@ async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promi
 
 /**
  * Identifies the single vinyl sleeve in `imageBuffer` using an AI vision
- * provider. Tries Gemini first, falls back to OpenAI on any failure. Never
- * throws — returns [] when both providers fail or neither API key is
- * configured, so callers can treat this as a plain "no suggestion" signal.
+ * provider. Tries Gemini first, falls back to OpenAI when Gemini merely
+ * fails or comes back ambiguous (isAlbumCover true but no guesses) — but
+ * NOT when Gemini gives a definitive "this isn't a record sleeve" answer,
+ * since that's a useful result in its own right, not a failure to recover
+ * from. Never throws — returns an ambiguous result when both providers fail
+ * or neither API key is configured, so callers can treat this as a plain
+ * "no suggestion" signal.
  *
  * `requestId` ties every log line here back to the originating /api/scan
  * request — pass the same id you're already logging with in the caller.
@@ -231,7 +285,9 @@ async function identifyWithOpenAI(imageBuffer: Buffer, requestId: string): Promi
  * https://ai.google.dev/gemini-api/docs/image-understanding if calls start
  * failing unexpectedly.
  */
-export async function identifyVinyl(imageBuffer: Buffer, requestId = 'unknown'): Promise<VisionScanResult[]> {
+export async function identifyVinyl(imageBuffer: Buffer, requestId = 'unknown'): Promise<VisionIdentifyResult> {
+  const ambiguous: VisionIdentifyResult = { isAlbumCover: true, guesses: [] };
+
   let resized: Buffer;
   try {
     resized = await resizeForVision(imageBuffer);
@@ -241,19 +297,20 @@ export async function identifyVinyl(imageBuffer: Buffer, requestId = 'unknown'):
     });
   } catch (err) {
     logWarn(SCOPE, requestId, 'Failed to resize image for vision providers', { error: String(err) });
-    return [];
+    return ambiguous;
   }
 
   if (process.env.GEMINI_API_KEY) {
     const startedAt = Date.now();
     try {
-      const geminiResults = await identifyWithGemini(resized, requestId);
+      const geminiResult = await identifyWithGemini(resized, requestId);
       logEvent(SCOPE, requestId, 'Gemini call complete', {
         ms: Date.now() - startedAt,
-        resultCount: geminiResults.length,
-        top: geminiResults[0],
+        isAlbumCover: geminiResult.isAlbumCover,
+        resultCount: geminiResult.guesses.length,
+        top: geminiResult.guesses[0],
       });
-      if (geminiResults.length > 0) return geminiResults;
+      if (!geminiResult.isAlbumCover || geminiResult.guesses.length > 0) return geminiResult;
     } catch (err) {
       logWarn(SCOPE, requestId, 'Gemini call failed', { ms: Date.now() - startedAt, error: String(err) });
     }
@@ -264,13 +321,14 @@ export async function identifyVinyl(imageBuffer: Buffer, requestId = 'unknown'):
   if (process.env.OPENAI_API_KEY) {
     const startedAt = Date.now();
     try {
-      const openaiResults = await identifyWithOpenAI(resized, requestId);
+      const openaiResult = await identifyWithOpenAI(resized, requestId);
       logEvent(SCOPE, requestId, 'OpenAI call complete', {
         ms: Date.now() - startedAt,
-        resultCount: openaiResults.length,
-        top: openaiResults[0],
+        isAlbumCover: openaiResult.isAlbumCover,
+        resultCount: openaiResult.guesses.length,
+        top: openaiResult.guesses[0],
       });
-      if (openaiResults.length > 0) return openaiResults;
+      if (!openaiResult.isAlbumCover || openaiResult.guesses.length > 0) return openaiResult;
     } catch (err) {
       logWarn(SCOPE, requestId, 'OpenAI call failed', { ms: Date.now() - startedAt, error: String(err) });
     }
@@ -279,5 +337,5 @@ export async function identifyVinyl(imageBuffer: Buffer, requestId = 'unknown'):
   }
 
   logEvent(SCOPE, requestId, 'No provider produced a usable result');
-  return [];
+  return ambiguous;
 }

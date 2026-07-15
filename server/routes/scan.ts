@@ -45,6 +45,8 @@ interface VisionSuggestionsResult {
     guesses: ValidatedGuess[];
     suggestedQuery?: string;
   };
+  /** True when the AI determined the photo does not show a record sleeve at all. */
+  notAlbumCover?: boolean;
 }
 
 function rowToRecord(row: CollectionRow) {
@@ -159,11 +161,14 @@ scanRouter.post('/', async (req, res) => {
 
   logEvent('scan', requestId, 'Request complete', {
     matched: false,
+    notAlbumCover: Boolean(visionResult.notAlbumCover),
     visionGuessCount: visionResult.vision?.guesses.length ?? 0,
     validatedGuessCount: visionResult.vision?.guesses.filter((g) => g.validated).length ?? 0,
     totalMs: Date.now() - startedAt,
   });
-  if (visionResult.vision) {
+  if (visionResult.notAlbumCover) {
+    res.json({ matched: false, notAlbumCover: true });
+  } else if (visionResult.vision) {
     res.json({ matched: false, vision: visionResult.vision });
   } else {
     res.json({ matched: false });
@@ -217,13 +222,20 @@ async function getVisionSuggestions(
 
   try {
     const visionStartedAt = Date.now();
-    const guesses = await identifyVinyl(imageBuffer, requestId);
+    const identifyResult = await identifyVinyl(imageBuffer, requestId);
     logEvent('scan', requestId, 'Vision guesses received', {
-      guessCount: guesses.length,
-      top: guesses[0],
+      isAlbumCover: identifyResult.isAlbumCover,
+      guessCount: identifyResult.guesses.length,
+      top: identifyResult.guesses[0],
       ms: Date.now() - visionStartedAt,
     });
 
+    if (!identifyResult.isAlbumCover) {
+      logEvent('scan', requestId, 'AI declined — photo does not appear to show a record sleeve; skipping validation searches');
+      return { notAlbumCover: true };
+    }
+
+    const guesses = identifyResult.guesses;
     const [topGuess] = guesses;
     if (!topGuess) {
       logEvent('scan', requestId, 'No vision suggestion available — client will fall back to manual search');
