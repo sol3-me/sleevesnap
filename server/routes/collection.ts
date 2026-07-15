@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { db } from '../db.js';
 import { isSafeExternalUrl } from '../urlUtils.js';
 
@@ -53,11 +53,23 @@ function rowToRecord(row: CollectionRow) {
   };
 }
 
+// Routes below assume the auth middleware ran; a missing user is a server
+// wiring mistake, not a client error, but answering 401 keeps data safe.
+function requireUid(req: Request, res: Response): string | undefined {
+  const uid = req.user?.uid;
+  if (!uid) {
+    res.status(401).json({ error: 'Authentication required' });
+  }
+  return uid;
+}
+
 // GET /api/collection
-collectionRouter.get('/', (_req, res) => {
+collectionRouter.get('/', (req, res) => {
+  const uid = requireUid(req, res);
+  if (!uid) return;
   const rows = db
-    .prepare('SELECT * FROM collection ORDER BY date_added DESC')
-    .all() as CollectionRow[];
+    .prepare('SELECT * FROM collection WHERE user_id = ? ORDER BY date_added DESC')
+    .all(uid) as CollectionRow[];
   res.json(rows.map(rowToRecord));
 });
 
@@ -66,6 +78,8 @@ collectionRouter.get('/', (_req, res) => {
 // original pressing and a later reissue of the same album — falls back to
 // artist+title only when neither record has a musicBrainzId to compare.
 collectionRouter.post('/', (req, res) => {
+  const uid = requireUid(req, res);
+  if (!uid) return;
   const {
     id,
     artist,
@@ -95,12 +109,14 @@ collectionRouter.post('/', (req, res) => {
   }
 
   const existing = musicBrainzId
-    ? db.prepare('SELECT id FROM collection WHERE musicbrainz_id = ?').get(musicBrainzId)
+    ? db
+        .prepare('SELECT id FROM collection WHERE user_id = ? AND musicbrainz_id = ?')
+        .get(uid, musicBrainzId)
     : db
         .prepare(
-          'SELECT id FROM collection WHERE lower(artist) = lower(?) AND lower(title) = lower(?) AND musicbrainz_id IS NULL',
+          'SELECT id FROM collection WHERE user_id = ? AND lower(artist) = lower(?) AND lower(title) = lower(?) AND musicbrainz_id IS NULL',
         )
-        .get(artist, title);
+        .get(uid, artist, title);
 
   if (existing) {
     res.status(409).json({ error: 'Record already in collection' });
@@ -128,8 +144,9 @@ collectionRouter.post('/', (req, res) => {
       thumbnail_url,
       cover_url,
       date_added,
-      notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      notes,
+      user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     artist,
@@ -151,6 +168,7 @@ collectionRouter.post('/', (req, res) => {
     coverUrl ?? null,
     dateAdded ?? Date.now(),
     notes ?? null,
+    uid,
   );
 
   // Fire-and-forget: compute and store a pHash for this cover so it can be
@@ -164,8 +182,10 @@ collectionRouter.post('/', (req, res) => {
 
 // DELETE /api/collection/:id
 collectionRouter.delete('/:id', (req, res) => {
+  const uid = requireUid(req, res);
+  if (!uid) return;
   const { id } = req.params;
-  db.prepare('DELETE FROM collection WHERE id = ?').run(id);
+  db.prepare('DELETE FROM collection WHERE id = ? AND user_id = ?').run(id, uid);
   res.json({ success: true });
 });
 

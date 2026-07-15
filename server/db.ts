@@ -74,6 +74,7 @@ export function initDb(): void {
   };
 
   addColumnIfMissing('phash', 'TEXT');
+  addColumnIfMissing('user_id', 'TEXT');
   addColumnIfMissing('release_date', 'TEXT');
   addColumnIfMissing('format', 'TEXT');
   addColumnIfMissing('country', 'TEXT');
