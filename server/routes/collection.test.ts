@@ -12,14 +12,31 @@ const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sleevesnap-collection-
 process.env.CACHE_DB_PATH = path.join(scratchDir, 'cache.db');
 
 const { initDb } = await import('../db.js');
+const { createAuthMiddleware } = await import('../auth.js');
 const { collectionRouter } = await import('./collection.js');
 
 initDb();
 
+// Two fixed identities so tests can exercise cross-user isolation. The
+// middleware itself is covered by auth.test.ts; here it only exists to
+// stamp req.user the way production will.
+const USERS: Record<string, { uid: string; email: string }> = {
+  'token-a': { uid: 'user-a', email: 'a@example.com' },
+  'token-b': { uid: 'user-b', email: 'b@example.com' },
+};
+
 async function startTestServer(): Promise<{ server: http.Server; port: number }> {
   const app = express();
   app.use(express.json());
-  app.use('/api/collection', collectionRouter);
+  app.use(
+    '/api/collection',
+    createAuthMiddleware(async (token) => {
+      const user = USERS[token];
+      if (!user) throw new Error('unknown token');
+      return user;
+    }),
+    collectionRouter,
+  );
 
   return await new Promise((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
@@ -48,21 +65,22 @@ async function requestJson(
   port: number,
   path: string,
   method: 'GET' | 'POST' | 'DELETE',
+  token: string | undefined,
   body?: unknown,
 ): Promise<{ statusCode: number; json: any }> {
   return await new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : undefined;
+    const headers: Record<string, string | number> = {};
+    if (payload) {
+      headers['content-type'] = 'application/json';
+      headers['content-length'] = Buffer.byteLength(payload);
+    }
+    if (token) {
+      headers.authorization = `Bearer ${token}`;
+    }
 
     const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port,
-        path,
-        method,
-        headers: payload
-          ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }
-          : undefined,
-      },
+      { hostname: '127.0.0.1', port, path, method, headers },
       (res) => {
         let data = '';
         res.setEncoding('utf8');
@@ -88,7 +106,7 @@ test('allows adding two different pressings (distinct musicBrainzId) of the same
   const { server, port } = await startTestServer();
 
   try {
-    const original = await requestJson(port, '/api/collection', 'POST', {
+    const original = await requestJson(port, '/api/collection', 'POST', 'token-a', {
       id: 'original-pressing',
       artist: 'Queens of the Stone Age',
       title: 'Rated R',
@@ -97,7 +115,7 @@ test('allows adding two different pressings (distinct musicBrainzId) of the same
     });
     assert.equal(original.statusCode, 201);
 
-    const reissue = await requestJson(port, '/api/collection', 'POST', {
+    const reissue = await requestJson(port, '/api/collection', 'POST', 'token-a', {
       id: 'reissue-pressing',
       artist: 'Queens of the Stone Age',
       title: 'Rated R',
@@ -114,11 +132,11 @@ test('allows adding two different pressings (distinct musicBrainzId) of the same
   }
 });
 
-test('still blocks adding the exact same musicBrainzId twice', async () => {
+test('still blocks adding the exact same musicBrainzId twice for one user', async () => {
   const { server, port } = await startTestServer();
 
   try {
-    const first = await requestJson(port, '/api/collection', 'POST', {
+    const first = await requestJson(port, '/api/collection', 'POST', 'token-a', {
       id: 'first-add',
       artist: 'Rihanna',
       title: 'Rated R',
@@ -127,7 +145,7 @@ test('still blocks adding the exact same musicBrainzId twice', async () => {
     });
     assert.equal(first.statusCode, 201);
 
-    const duplicate = await requestJson(port, '/api/collection', 'POST', {
+    const duplicate = await requestJson(port, '/api/collection', 'POST', 'token-a', {
       id: 'second-add-same-pressing',
       artist: 'Rihanna',
       title: 'Rated R',
@@ -144,7 +162,7 @@ test('falls back to artist + title dedup when neither record has a musicBrainzId
   const { server, port } = await startTestServer();
 
   try {
-    const first = await requestJson(port, '/api/collection', 'POST', {
+    const first = await requestJson(port, '/api/collection', 'POST', 'token-a', {
       id: 'manual-add-1',
       artist: 'Some Local Band',
       title: 'Self-Released Tape',
@@ -152,7 +170,7 @@ test('falls back to artist + title dedup when neither record has a musicBrainzId
     });
     assert.equal(first.statusCode, 201);
 
-    const duplicate = await requestJson(port, '/api/collection', 'POST', {
+    const duplicate = await requestJson(port, '/api/collection', 'POST', 'token-a', {
       id: 'manual-add-2',
       artist: 'some local band',
       title: 'self-released tape',
@@ -163,6 +181,105 @@ test('falls back to artist + title dedup when neither record has a musicBrainzId
       409,
       'without a musicBrainzId on either side, the legacy artist+title guard should still apply',
     );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// --- Per-user scoping ------------------------------------------------------
+
+test('a user only sees their own records', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const added = await requestJson(port, '/api/collection', 'POST', 'token-a', {
+      id: 'a-private-record',
+      artist: 'Boards of Canada',
+      title: 'Music Has the Right to Children',
+      musicBrainzId: 'mbid-mhtrtc',
+      dateAdded: Date.now(),
+    });
+    assert.equal(added.statusCode, 201);
+
+    const asA = await requestJson(port, '/api/collection', 'GET', 'token-a');
+    assert.equal(asA.statusCode, 200);
+    assert.ok(
+      asA.json.some((r: any) => r.id === 'a-private-record'),
+      "user A's own record must appear in their collection",
+    );
+
+    const asB = await requestJson(port, '/api/collection', 'GET', 'token-b');
+    assert.equal(asB.statusCode, 200);
+    assert.ok(
+      !asB.json.some((r: any) => r.id === 'a-private-record'),
+      "user A's record must not leak into user B's collection",
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('two different users can each own the same pressing', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const forA = await requestJson(port, '/api/collection', 'POST', 'token-a', {
+      id: 'a-copy-of-loveless',
+      artist: 'My Bloody Valentine',
+      title: 'Loveless',
+      musicBrainzId: 'mbid-loveless-1991',
+      dateAdded: Date.now(),
+    });
+    assert.equal(forA.statusCode, 201);
+
+    const forB = await requestJson(port, '/api/collection', 'POST', 'token-b', {
+      id: 'b-copy-of-loveless',
+      artist: 'My Bloody Valentine',
+      title: 'Loveless',
+      musicBrainzId: 'mbid-loveless-1991',
+      dateAdded: Date.now(),
+    });
+    assert.equal(
+      forB.statusCode,
+      201,
+      "dedup must be per-user — B owning the same pressing as A is not a duplicate in B's collection",
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("a user cannot delete another user's record", async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const added = await requestJson(port, '/api/collection', 'POST', 'token-a', {
+      id: 'a-record-b-wants-gone',
+      artist: 'Aphex Twin',
+      title: 'Selected Ambient Works 85-92',
+      musicBrainzId: 'mbid-saw-85-92',
+      dateAdded: Date.now(),
+    });
+    assert.equal(added.statusCode, 201);
+
+    await requestJson(port, '/api/collection/a-record-b-wants-gone', 'DELETE', 'token-b');
+
+    const asA = await requestJson(port, '/api/collection', 'GET', 'token-a');
+    assert.ok(
+      asA.json.some((r: any) => r.id === 'a-record-b-wants-gone'),
+      "user B's delete must not remove user A's record",
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('requests without a token are rejected before touching the collection', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const res = await requestJson(port, '/api/collection', 'GET', undefined);
+    assert.equal(res.statusCode, 401);
   } finally {
     await closeServer(server);
   }
