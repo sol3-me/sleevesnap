@@ -178,10 +178,11 @@ async function requestJson(
   port: number,
   path: string,
   method: 'GET',
+  token = 'token-a',
 ): Promise<{ statusCode: number; json: any }> {
   return await new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: '127.0.0.1', port, path, method, headers: { authorization: 'Bearer token-a' } },
+      { hostname: '127.0.0.1', port, path, method, headers: { authorization: `Bearer ${token}` } },
       (res) => {
         let data = '';
         res.setEncoding('utf8');
@@ -207,7 +208,7 @@ afterEach(() => {
   delete process.env.VISION_DAILY_LIMIT;
   delete process.env.VISION_ADMIN_KEY;
   db.exec('DELETE FROM collection');
-  db.exec('DELETE FROM vision_call_tracker');
+  db.exec('DELETE FROM user_vision_call_tracker');
 });
 
 test('POST /api/scan falls through to vision suggestions when no pHash match exists', async () => {
@@ -252,8 +253,8 @@ test('POST /api/scan skips the vision call when the daily cap is already exceede
   process.env.GEMINI_API_KEY = 'test-key';
   process.env.VISION_DAILY_LIMIT = '2';
   db.prepare(
-    'INSERT INTO vision_call_tracker (date, call_count) VALUES (?, ?)',
-  ).run(todayKey(), 2);
+    'INSERT INTO user_vision_call_tracker (date, user_id, call_count) VALUES (?, ?, ?)',
+  ).run(todayKey(), 'user-a', 2);
 
   let visionCalled = false;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -280,8 +281,8 @@ test('POST /api/scan bypasses the daily cap when X-Vision-Admin-Key matches VISI
   process.env.VISION_DAILY_LIMIT = '2';
   process.env.VISION_ADMIN_KEY = 'test-secret';
   db.prepare(
-    'INSERT INTO vision_call_tracker (date, call_count) VALUES (?, ?)',
-  ).run(todayKey(), 2);
+    'INSERT INTO user_vision_call_tracker (date, user_id, call_count) VALUES (?, ?, ?)',
+  ).run(todayKey(), 'user-a', 2);
   globalThis.fetch = successfulVisionMock();
 
   const { server, port } = await startTestServer();
@@ -301,8 +302,8 @@ test('POST /api/scan still enforces the cap when X-Vision-Admin-Key does not mat
   process.env.VISION_DAILY_LIMIT = '2';
   process.env.VISION_ADMIN_KEY = 'test-secret';
   db.prepare(
-    'INSERT INTO vision_call_tracker (date, call_count) VALUES (?, ?)',
-  ).run(todayKey(), 2);
+    'INSERT INTO user_vision_call_tracker (date, user_id, call_count) VALUES (?, ?, ?)',
+  ).run(todayKey(), 'user-a', 2);
 
   let visionCalled = false;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -558,6 +559,27 @@ test('GET /api/scan/quota never reports negative remaining once usage exceeds th
     const res = await requestJson(port, '/api/scan/quota', 'GET');
     assert.equal(res.json.used, 2);
     assert.equal(res.json.remaining, 0);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("GET /api/scan/quota is scoped per user — one user's scans don't count against another's quota", async () => {
+  process.env.VISION_DAILY_LIMIT = '5';
+  process.env.GEMINI_API_KEY = 'test-key';
+  globalThis.fetch = successfulVisionMock();
+
+  const { server, port } = await startTestServer();
+  try {
+    await postScan(port, TINY_JPEG_BASE64, {}, 'token-a');
+    await postScan(port, TINY_JPEG_BASE64, {}, 'token-a');
+
+    const quotaA = await requestJson(port, '/api/scan/quota', 'GET', 'token-a');
+    assert.equal(quotaA.json.used, 2);
+
+    const quotaB = await requestJson(port, '/api/scan/quota', 'GET', 'token-b');
+    assert.equal(quotaB.json.used, 0, "user-b's quota must not reflect user-a's scans");
+    assert.equal(quotaB.json.remaining, 5);
   } finally {
     await closeServer(server);
   }
