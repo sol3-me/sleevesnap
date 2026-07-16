@@ -9,7 +9,7 @@ export type DemoState = { phase: DemoPhase; albumIndex: number };
 
 export const DEMO_PHASE_MS: Record<DemoPhase, number> = {
   scanning: 2400,
-  snap: 700,
+  snap: 1100,
   result: 2400,
 };
 

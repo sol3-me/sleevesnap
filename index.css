@@ -18,7 +18,7 @@
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
   --animate-spin-slow: spin 3s linear infinite;
-  --animate-stamp-pop: stamp-pop 550ms cubic-bezier(0.2, 0.9, 0.3, 1.1) forwards;
+  --animate-stamp-pop: stamp-pop 850ms cubic-bezier(0.2, 0.9, 0.3, 1.1) forwards;
 }
 
 /* Rubber-stamp "hit" for the camera shutter: overshoots big and rotated,

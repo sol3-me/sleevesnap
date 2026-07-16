@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AdvancedSearchFields, AdvancedSearchFieldsValue } from '../components/AdvancedSearchFields';
+import { AiGuessChips } from '../components/AiGuessChips';
 import { AiGuessSearchFields } from '../components/AiGuessSearchFields';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
-import { ScanQuotaBanner } from '../components/ScanQuotaBanner';
+import { QUOTA_TEXT_TONE_CLASSES, ScanQuotaBanner, quotaTone } from '../components/ScanQuotaBanner';
 import { bestGuess, confidenceTier, confidenceTierLabel, guessToFields } from '../lib/aiGuessFields';
 import { triggerImageDownload } from '../lib/downloadImage';
 import { logEvent, logWarn } from '../services/telemetry';
@@ -72,6 +73,18 @@ const DownloadIcon = () => (
 
 const TrashIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+);
+
+const SearchIcon = ({ className }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+);
+
+const ChevronDownIcon = ({ className }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="6 9 12 15 18 9" /></svg>
+);
+
+const HistoryIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3 3" /></svg>
 );
 
 /** Fraction of the shorter viewfinder dimension the square capture frame occupies. */
@@ -236,7 +249,9 @@ export const Scanner: React.FC<ScannerProps> = ({
     }
 
     // Play the stamp animation first, then grab the frame — the delay is what
-    // makes the capture feel like a deliberate "snap" rather than an instant cut.
+    // makes the capture feel like a deliberate "snap" rather than an instant
+    // cut. Matches the stamp-pop keyframe's duration (index.css) plus a
+    // small buffer so the animation is never cut off mid-flight.
     setIsCapturing(true);
     window.setTimeout(() => {
       const container = videoContainerRef.current;
@@ -268,7 +283,7 @@ export const Scanner: React.FC<ScannerProps> = ({
       setIsCapturing(false);
       stopCamera();
       processImage(dataUrl, 'camera');
-    }, 220);
+    }, 900);
   }, [isVideoReady, stopCamera]);
 
   /** Shared by file-input selection and drag-and-drop. */
@@ -621,19 +636,29 @@ export const Scanner: React.FC<ScannerProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-vinyl-950 text-white p-4 md:p-8">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-4 md:mb-6">
-        <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white">Scan</h2>
+      {/* Header — a 3-column grid (not just justify-between) so the quota
+          text sits exactly centered between the title and Close button
+          regardless of either's width. */}
+      <div className="grid grid-cols-3 items-center mb-4 md:mb-6">
+        <h2 className="justify-self-start text-2xl md:text-3xl font-bold tracking-tight text-white">Scan</h2>
+        {quota && stage !== 'analyzing' && stage !== 'saving' && !(stage === 'capture' && isStreaming) ? (
+          <span className={`justify-self-center text-center text-[11px] md:text-sm font-medium ${QUOTA_TEXT_TONE_CLASSES[quotaTone(quota)]}`}>
+            {quota.remaining} of {quota.limit} AI scans left today
+          </span>
+        ) : (
+          <span />
+        )}
         <button
           onClick={onCancel}
-          className="px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-sm font-medium text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+          className="justify-self-end px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-sm font-medium text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
         >
           Close
         </button>
       </div>
 
-      {/* Daily AI-scan allowance — hidden while the camera viewfinder is open
-          (no room, and the user is mid-capture) and during the brief
+      {/* Low/exhausted-quota nudge — the remaining count itself now lives in
+          the header above. Hidden while the camera viewfinder is open (no
+          room, and the user is mid-capture) and during the brief
           analyzing/saving overlays. */}
       {quota && stage !== 'analyzing' && stage !== 'saving' && !(stage === 'capture' && isStreaming) && (
         <ScanQuotaBanner quota={quota} onViewHistory={() => void openHistory()} />
@@ -700,8 +725,9 @@ export const Scanner: React.FC<ScannerProps> = ({
 
           <button
             onClick={() => void openHistory()}
-            className="text-sm text-gray-500 hover:text-gray-300 underline underline-offset-2"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-full border border-vinyl-accent/30 bg-vinyl-accent/10 text-vinyl-accent hover:bg-vinyl-accent/20 hover:border-vinyl-accent/50 transition-colors text-sm font-medium"
           >
+            <HistoryIcon />
             View past scans
           </button>
 
@@ -790,7 +816,7 @@ export const Scanner: React.FC<ScannerProps> = ({
             {/* Stamp badge — pops in and settles on capture, reinforcing the "snap". */}
             {isCapturing && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="px-6 py-2 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-2xl tracking-widest uppercase animate-stamp-pop">
+                <div className="px-6 py-2 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-2xl tracking-widest uppercase animate-stamp-pop [-webkit-text-stroke:1px_black] shadow-[0_0_0_3px_#000]">
                   Snap!
                 </div>
               </div>
@@ -950,49 +976,71 @@ export const Scanner: React.FC<ScannerProps> = ({
             <div className="bg-red-900/80 text-white p-3 rounded text-sm">{error}</div>
           )}
 
-          {/* Search fields — collapses to a one-line summary once there are
-              results, so the results are visible without scrolling past the
-              form that produced them. */}
-          {isSearchFormExpanded ? (
-            <div className="flex flex-col gap-2">
-              {aiGuesses.length > 0 ? (
-                <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
-                  <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">
-                    AI suggestions{aiGuesses.some((g) => g.validated) ? ' · ✓ found on MusicBrainz' : ''}
-                  </p>
-                  <AiGuessSearchFields
-                    guesses={aiGuesses}
-                    value={searchFields}
-                    onChange={setSearchFields}
-                    onSubmit={handleSearch}
-                    onApplyGuess={applyGuess}
-                  />
-                  <p className="text-[11px] text-gray-500 mt-2">
-                    AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
-                  </p>
-                </div>
-              ) : (
-                <AdvancedSearchFields value={searchFields} onChange={setSearchFields} onSubmit={handleSearch} />
-              )}
-              <button
-                onClick={handleSearch}
-                disabled={stage === 'searching' || !hasAnyIntentField(searchFields)}
-                className="bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-4 py-3 rounded-xl font-semibold text-sm disabled:opacity-50 transition-colors"
-              >
-                {stage === 'searching' ? '…' : 'Search'}
-              </button>
-            </div>
-          ) : (
+          {/* Search fields — a persistent toggle bar (search icon + summary
+              when collapsed, "Search details" when open) collapses/expands
+              the form, so the results stay visible without scrolling past
+              it once there's something to search for. */}
+          <div className="flex flex-col gap-2">
             <button
-              onClick={() => setIsSearchFormExpanded(true)}
+              onClick={() => setIsSearchFormExpanded((expanded) => !expanded)}
+              aria-expanded={isSearchFormExpanded}
               className="flex items-center justify-between gap-2 w-full bg-vinyl-900/70 border border-white/10 rounded-xl px-4 py-3 text-left hover:bg-vinyl-900 transition-colors"
             >
-              <span className="text-sm text-gray-300 truncate">
-                {[searchFields.title, searchFields.artist, searchFields.year].filter(Boolean).join(' · ')}
+              <span className="flex items-center gap-2 min-w-0 flex-1">
+                <SearchIcon className="text-gray-500 shrink-0" />
+                <span className="text-sm text-gray-300 truncate">
+                  {isSearchFormExpanded
+                    ? 'Search details'
+                    : [searchFields.title, searchFields.artist, searchFields.year].filter(Boolean).join(' · ') ||
+                      'Search'}
+                </span>
               </span>
-              <span className="text-xs text-vinyl-accent shrink-0 font-medium">Edit search</span>
+              <span className="flex items-center gap-1 text-xs text-vinyl-accent shrink-0 font-medium">
+                {isSearchFormExpanded ? 'Collapse' : 'Edit search'}
+                <ChevronDownIcon className={`transition-transform ${isSearchFormExpanded ? 'rotate-180' : ''}`} />
+              </span>
             </button>
-          )}
+
+            {isSearchFormExpanded && (
+              <>
+                {aiGuesses.length > 0 ? (
+                  <>
+                    {/* AI suggestion pills — kept visually separate from the
+                        editable fields below so picking a whole guess reads
+                        as a distinct action from editing individual fields. */}
+                    <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+                      <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">
+                        AI suggestions{aiGuesses.some((g) => g.validated) ? ' · ✓ found on MusicBrainz' : ''}
+                      </p>
+                      <AiGuessChips guesses={aiGuesses} onApplyGuess={applyGuess} />
+                    </div>
+                    <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+                      <AiGuessSearchFields
+                        guesses={aiGuesses}
+                        value={searchFields}
+                        onChange={setSearchFields}
+                        onSubmit={handleSearch}
+                      />
+                      <p className="text-[11px] text-gray-500 mt-2">
+                        AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+                    <AdvancedSearchFields value={searchFields} onChange={setSearchFields} onSubmit={handleSearch} />
+                  </div>
+                )}
+                <button
+                  onClick={handleSearch}
+                  disabled={stage === 'searching' || !hasAnyIntentField(searchFields)}
+                  className="bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-4 py-3 rounded-xl font-semibold text-sm disabled:opacity-50 transition-colors"
+                >
+                  {stage === 'searching' ? '…' : 'Search'}
+                </button>
+              </>
+            )}
+          </div>
 
           {/* Search results — no flex-1/overflow here; the stage container above
               is the single scroll region, so results are never starved of

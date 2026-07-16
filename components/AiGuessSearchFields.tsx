@@ -14,16 +14,14 @@ interface AiGuessSearchFieldsProps {
   value: GuessFieldsValue;
   onChange: (next: GuessFieldsValue) => void;
   onSubmit: () => void;
-  /** Fill every field from this guess (and show its pre-fetched results if it has any). */
-  onApplyGuess: (guess: ScanVisionSuggestion) => void;
 }
 
 /** Confidence-tier colour classes, tuned for the app's dark theme. */
-const TIER_STYLES: Record<ConfidenceTier, { text: string; border: string; chipBg: string; chipBorder: string }> = {
-  high: { text: 'text-green-400', border: 'border-l-green-400', chipBg: 'bg-green-500/10', chipBorder: 'border-green-500/40' },
-  medium: { text: 'text-amber-400', border: 'border-l-amber-400', chipBg: 'bg-amber-500/10', chipBorder: 'border-amber-500/40' },
-  low: { text: 'text-red-400', border: 'border-l-red-400', chipBg: 'bg-red-500/10', chipBorder: 'border-red-500/40' },
-  guess: { text: 'text-gray-400', border: 'border-l-gray-500', chipBg: 'bg-white/5', chipBorder: 'border-white/15' },
+const TIER_STYLES: Record<ConfidenceTier, { text: string; border: string }> = {
+  high: { text: 'text-green-400', border: 'border-l-green-400' },
+  medium: { text: 'text-amber-400', border: 'border-l-amber-400' },
+  low: { text: 'text-red-400', border: 'border-l-red-400' },
+  guess: { text: 'text-gray-400', border: 'border-l-gray-500' },
 };
 
 const FIELD_KEYS = ['title', 'artist', 'year'] as const;
@@ -55,7 +53,6 @@ export const AiGuessSearchFields: React.FC<AiGuessSearchFieldsProps> = ({
   value,
   onChange,
   onSubmit,
-  onApplyGuess,
 }) => {
   const [openField, setOpenField] = useState<GuessedFieldKey | null>(null);
 
@@ -136,28 +133,8 @@ export const AiGuessSearchFields: React.FC<AiGuessSearchFieldsProps> = ({
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Whole-guess chips, colour-coded by confidence; ✓ = found on MusicBrainz. */}
-      <div className="flex flex-wrap gap-2">
-        {rankGuesses(guesses).map((guess, idx) => {
-          const tier = confidenceTier(guess.confidence);
-          const style = TIER_STYLES[tier];
-          return (
-            <button
-              key={`${guess.artist}-${guess.title}-${idx}`}
-              onClick={() => onApplyGuess(guess)}
-              className={`px-3 py-1.5 rounded-full border text-xs transition-colors hover:brightness-125 ${style.chipBg} ${style.chipBorder} ${style.text}`}
-            >
-              {`${guess.artist} - ${guess.title}`}
-              <span className="ml-1 opacity-75">{confidenceTierLabel(tier)}{guess.validated ? ' ✓' : ''}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-        {(['title', 'artist', 'year', 'label'] as const).map(renderField)}
-      </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+      {(['title', 'artist', 'year', 'label'] as const).map(renderField)}
     </div>
   );
 };

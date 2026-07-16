@@ -81,9 +81,15 @@ function DemoPhone({ albums }: { albums: LandingCover[] }) {
           {demo.phase === 'scanning' && (
             <span className="absolute inset-3 rounded-lg border-2 border-vinyl-accent animate-pulse"></span>
           )}
+          {/* Capture flash — mirrors the real Scanner's white shutter flash. */}
+          <div
+            className={`absolute inset-0 bg-white pointer-events-none transition-opacity ${
+              demo.phase === 'snap' ? 'opacity-80 duration-100' : 'opacity-0 duration-200'
+            }`}
+          ></div>
           {demo.phase === 'snap' && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="px-3 py-1 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-lg tracking-widest uppercase animate-stamp-pop">
+              <div className="px-3 py-1 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-lg tracking-widest uppercase animate-stamp-pop [-webkit-text-stroke:1px_black] shadow-[0_0_0_3px_#000]">
                 Snap!
               </div>
             </div>
@@ -205,8 +211,8 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
         </div>
       </header>
 
-      <section className="shrink-0 relative overflow-hidden border-b border-white/5">
-        <div className="absolute inset-0" aria-hidden="true">
+      <section className="shrink-0 relative overflow-hidden border-b border-white/5 lg:min-h-[60vh] lg:flex lg:items-center">
+        <div className="absolute inset-0 bg-vinyl-950" aria-hidden="true">
           <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-1 p-1">
             {tiles.map((tile, i) =>
               tile.kind === 'cover' ? (
@@ -249,7 +255,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
 
       <section
         id="landing-demo"
-        className="flex-1 flex flex-col sm:flex-row items-center justify-center gap-10 px-6 py-14 sm:py-20 scroll-mt-4"
+        className="flex-1 lg:min-h-[40vh] flex flex-col sm:flex-row items-center justify-center gap-10 px-6 py-14 sm:py-20 scroll-mt-4"
       >
         <DemoPhone albums={demoAlbums} />
         <div className="max-w-md text-center sm:text-left">
