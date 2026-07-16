@@ -31,7 +31,8 @@ _Captured 2026-07-16, right after Firebase Authentication merged to main._
 
 ## Growth & onboarding
 
-- [ ] Improved landing page with a feature demo
+- [x] Improved landing page with a feature demo (2026-07-16) — shipped: logged-out front door with an album-art wall (randomised from a curated 36-album pool in `server/services/landingPool.ts`, served self-hosted by the public `/api/landing/covers` endpoint riding the existing cover cache), ownership-ethos hero ("Your music. Actually yours."), scripted phone scan-demo loop, and trust-chip footer. Design chosen from three pitched concepts: manifesto-led hero + chip footer.
+- [ ] Landing follow-ups: (a) "Try a demo scan" currently scrolls to the looping animation — re-point it at real guest mode when that ships; (b) the longer ethos paragraph (technology serving physical media, not replacing it) was cut from the footer as too long and is earmarked for a future About page; (c) grow/curate the landing pool beyond the initial 36 albums
 - [ ] Demo/guest-mode-with-transfer-on-signup — agreed direction, needs its own design pass (see `ux-improvement-plan.md`'s Firebase Auth update note)
 - [ ] Import collection in batch (format/approach still undecided — Discogs CSV import was floated in `ux-improvement-plan.md` §3.5 as one option)
 
