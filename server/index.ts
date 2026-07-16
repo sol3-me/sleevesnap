@@ -15,7 +15,7 @@ import { createScanHistoryRouter } from './routes/scanHistory.js';
 import { createLandingRouter } from './routes/landing.js';
 import { startLandingWarmup } from './services/landingCovers.js';
 import { createStorageProvider } from './storage/index.js';
-import { apiLimiter, scanLimiter } from './rateLimiters.js';
+import { apiLimiter, coversLimiter, scanLimiter } from './rateLimiters.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,8 +43,10 @@ const storage = createStorageProvider();
 // Serve locally stored cover art. Deliberately NOT behind auth: cover and
 // scan images are loaded via <img> tags, which cannot send Authorization
 // headers. Keys are unguessable UUIDs; signed URLs are the future upgrade.
+// Uses its own generous limiter (an image wall is 40 requests per view) and
+// long-lived caching — stored covers are keyed by MBID and never rewritten.
 const coversPath = process.env.STORAGE_LOCAL_PATH ?? path.join(process.cwd(), 'data', 'covers');
-app.use('/covers', apiLimiter, express.static(coversPath));
+app.use('/covers', coversLimiter, express.static(coversPath, { maxAge: '30d', immutable: true }));
 
 // Every API route requires a signed-in user; verification only needs the
 // Firebase project id (no service-account credentials).

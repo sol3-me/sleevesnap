@@ -8,11 +8,18 @@ export type DemoPhase = 'scanning' | 'snap' | 'result';
 export type DemoState = { phase: DemoPhase; albumIndex: number };
 
 export const DEMO_PHASE_MS: Record<DemoPhase, number> = {
-  scanning: 0,
-  snap: 0,
-  result: 0,
+  scanning: 2400,
+  snap: 700,
+  result: 2400,
 };
 
-export function advanceDemo(state: DemoState, _albumCount: number): DemoState {
-  return state;
+export function advanceDemo(state: DemoState, albumCount: number): DemoState {
+  switch (state.phase) {
+    case 'scanning':
+      return { phase: 'snap', albumIndex: state.albumIndex };
+    case 'snap':
+      return { phase: 'result', albumIndex: state.albumIndex };
+    case 'result':
+      return { phase: 'scanning', albumIndex: (state.albumIndex + 1) % Math.max(albumCount, 1) };
+  }
 }
