@@ -3,47 +3,10 @@ import { Icons } from '../components/Icons';
 import { DEMO_PHASE_MS, advanceDemo, type DemoState } from '../lib/landingDemo';
 import {
   buildWallTiles,
-  createSeededRandom,
   pickWallCovers,
   wallTileCountFor,
   type LandingCover,
 } from '../lib/landingWall';
-
-const POOL_STORAGE_KEY = 'sleevesnap:landing:pool';
-const SEED_STORAGE_KEY = 'sleevesnap:landing:seed';
-
-// sessionStorage access is wrapped: it throws in private-mode Safari and
-// when storage is disabled. A miss just means a network fetch / fresh seed.
-function readCachedPool(): LandingCover[] {
-  try {
-    const raw = sessionStorage.getItem(POOL_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeCachedPool(covers: LandingCover[]): void {
-  try {
-    sessionStorage.setItem(POOL_STORAGE_KEY, JSON.stringify(covers));
-  } catch {
-    // Non-fatal: the wall still works, it just re-fetches next reload.
-  }
-}
-
-/** A seed that is stable for the browser session and changes on a new visit. */
-function sessionSeed(): number {
-  try {
-    const existing = sessionStorage.getItem(SEED_STORAGE_KEY);
-    if (existing !== null) return Number(existing);
-    const seed = Math.floor(Math.random() * 0xffffffff);
-    sessionStorage.setItem(SEED_STORAGE_KEY, String(seed));
-    return seed;
-  } catch {
-    return Math.floor(Math.random() * 0xffffffff);
-  }
-}
 
 // Muted sleeve-ish tones for tiles the cover cache can't fill yet, so a
 // cold cache still reads as a wall of records rather than a broken grid.
@@ -172,20 +135,24 @@ function DemoPhone({ albums }: { albums: LandingCover[] }) {
  * with flat colour tiles while the pool warms.
  */
 export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
-  const [covers, setCovers] = useState<LandingCover[]>(() => readCachedPool());
+  const [covers, setCovers] = useState<LandingCover[]>([]);
   const [tileCount, setTileCount] = useState(() => wallTileCountFor(window.innerWidth));
 
-  // One fetch of the full self-hosted pool, cached in sessionStorage so a
-  // refresh makes no request at all. Selection happens client-side.
+  // Fetch the whole pool of web-optimized thumbnails once, then preload every
+  // one into the browser cache. Covers are tiny (~256px JPEGs) and immutably
+  // cached, so a first visit pulls a couple of MB and every later refresh —
+  // which reshuffles the wall — is served entirely from cache.
   useEffect(() => {
-    if (covers.length > 0) return; // Served from the session cache already.
     let cancelled = false;
     void fetch('/api/landing/covers')
       .then((res) => (res.ok ? res.json() : { covers: [] }))
       .then((data: { covers?: LandingCover[] }) => {
         if (cancelled || !Array.isArray(data.covers)) return;
         setCovers(data.covers);
-        writeCachedPool(data.covers);
+        for (const cover of data.covers) {
+          const img = new Image();
+          img.src = cover.url;
+        }
       })
       .catch(() => {
         // The wall degrades to palette tiles; nothing to surface.
@@ -193,7 +160,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [covers.length]);
+  }, []);
 
   // Fewer tiles on mobile, more on desktop; wallTileCountFor returns
   // bucketed values, so resize only re-renders on a breakpoint change.
@@ -203,20 +170,14 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // A per-session seed keeps the selected covers identical across reloads,
-  // so the service worker serves the repeated images from cache instead of
-  // the wall re-requesting a fresh random set every refresh (which defeats
-  // the cache and exhausts the rate limit). The wall reshuffles on a new
-  // visit, not on refresh.
-  const rng = useMemo(() => createSeededRandom(sessionSeed()), []);
-
+  // Random, no-duplicate selection — reshuffles on every visit. The whole
+  // pool is preloaded, so each pick is a cache hit.
   const tiles = useMemo(
-    () => buildWallTiles(pickWallCovers(covers, tileCount, rng), tileCount, WALL_PALETTE),
-    [covers, tileCount, rng],
+    () => buildWallTiles(pickWallCovers(covers, tileCount), tileCount, WALL_PALETTE),
+    [covers, tileCount],
   );
 
-  // Three pool albums for the scripted demo, from the same stable seed.
-  const demoAlbums = useMemo(() => pickWallCovers(covers, 3, rng), [covers, rng]);
+  const demoAlbums = useMemo(() => pickWallCovers(covers, 3), [covers]);
 
   const accentButtonClassName =
     'px-5 py-3 rounded-xl text-sm font-semibold bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition';

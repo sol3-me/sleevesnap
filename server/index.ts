@@ -43,12 +43,13 @@ const storage = createStorageProvider();
 // Serve locally stored cover art. Deliberately NOT behind auth: cover and
 // scan images are loaded via <img> tags, which cannot send Authorization
 // headers. Keys are unguessable UUIDs; signed URLs are the future upgrade.
-// Long-lived immutable caching — stored covers are keyed by MBID and never
-// rewritten — plus a client-side service worker (public/sw.js) mean repeat
-// visitors serve the wall from cache and never re-request these images, so
-// the shared apiLimiter budget is enough.
+// Deliberately NOT behind apiLimiter either: these are immutable static
+// files, and the landing wall legitimately preloads the whole pool (~150
+// small thumbnails) on a first visit, which would trip the 100/min API
+// budget. Long-lived immutable caching means repeat visits and refreshes
+// serve from the browser cache and don't re-request them.
 const coversPath = process.env.STORAGE_LOCAL_PATH ?? path.join(process.cwd(), 'data', 'covers');
-app.use('/covers', apiLimiter, express.static(coversPath, { maxAge: '30d', immutable: true }));
+app.use('/covers', express.static(coversPath, { maxAge: '30d', immutable: true }));
 
 // Every API route requires a signed-in user; verification only needs the
 // Firebase project id (no service-account credentials).

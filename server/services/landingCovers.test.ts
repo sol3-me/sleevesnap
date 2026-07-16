@@ -35,6 +35,12 @@ function seedCover(artist: string, album: string, url: string): void {
   ).run(coverCacheKey(artist, album), url, Date.now());
 }
 
+function seedCoverWithThumb(artist: string, album: string, url: string, thumbUrl: string): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO cover_cache (cache_key, cover_url, thumb_url, fetched_at) VALUES (?, ?, ?, ?)',
+  ).run(coverCacheKey(artist, album), url, thumbUrl, Date.now());
+}
+
 test('coverCacheKey matches the covers route format: lowercased artist::album', () => {
   assert.equal(
     coverCacheKey('Pink Floyd', 'The Dark Side of the Moon'),
@@ -93,6 +99,17 @@ test('getCachedLandingCovers returns cached pool entries with their pool artist/
   });
 });
 
+test('getCachedLandingCovers returns the thumbnail url when present', () => {
+  clearCoverCache();
+  const [one] = LANDING_POOL;
+  seedCoverWithThumb(one.artist, one.album, 'http://covers/one.jpg', 'http://covers/one-w256.jpg');
+
+  const covers = getCachedLandingCovers(24, seededRandom(5));
+
+  assert.equal(covers.length, 1);
+  assert.equal(covers[0].url, 'http://covers/one-w256.jpg');
+});
+
 test('getCachedLandingCovers ignores cache rows that are not in the landing pool', () => {
   clearCoverCache();
   seedCover('Some Private User Search', 'Obscure Album', 'http://covers/private.jpg');
@@ -113,27 +130,55 @@ test('getCachedLandingCovers respects count when more covers are cached', () => 
   assert.equal(covers.length, 4);
 });
 
-test('warmLandingCovers fetches and caches only uncached pool entries', async () => {
+test('warmLandingCovers warms only pool entries that lack a thumbnail', async () => {
   clearCoverCache();
   const pool = LANDING_POOL.slice(0, 3);
-  seedCover(pool[0].artist, pool[0].album, 'http://covers/already.jpg');
+  seedCoverWithThumb(
+    pool[0].artist,
+    pool[0].album,
+    'http://covers/already.jpg',
+    'http://covers/already-w256.jpg',
+  );
 
-  const fetched: string[] = [];
+  const warmed: string[] = [];
   await warmLandingCovers(
     pool,
-    async (artist, album) => {
-      fetched.push(`${artist}::${album}`);
-      return `http://covers/${album}.jpg`;
+    async (artist, album, existing) => {
+      warmed.push(`${artist}::${album}::${existing ?? 'none'}`);
+      return { coverUrl: `http://covers/${album}.jpg`, thumbUrl: `http://covers/${album}-w256.jpg` };
     },
     0,
   );
 
-  assert.deepEqual(fetched, [
-    `${pool[1].artist}::${pool[1].album}`,
-    `${pool[2].artist}::${pool[2].album}`,
+  assert.deepEqual(warmed, [
+    `${pool[1].artist}::${pool[1].album}::none`,
+    `${pool[2].artist}::${pool[2].album}::none`,
   ]);
   const covers = getCachedLandingCovers(24, seededRandom(3));
   assert.equal(covers.length, 3);
+});
+
+test('warmLandingCovers reuses an existing full cover instead of refetching, and stores its thumbnail', async () => {
+  clearCoverCache();
+  const pool = LANDING_POOL.slice(0, 1);
+  seedCover(pool[0].artist, pool[0].album, 'http://covers/full.jpg'); // full-res, no thumb yet
+
+  const passedExisting: (string | null)[] = [];
+  await warmLandingCovers(
+    pool,
+    async (_artist, album, existing) => {
+      passedExisting.push(existing);
+      return {
+        coverUrl: existing ?? `http://covers/${album}.jpg`,
+        thumbUrl: `http://covers/${album}-w256.jpg`,
+      };
+    },
+    0,
+  );
+
+  assert.deepEqual(passedExisting, ['http://covers/full.jpg']);
+  const [cover] = getCachedLandingCovers(24, seededRandom(3));
+  assert.equal(cover.url, `http://covers/${pool[0].album}-w256.jpg`);
 });
 
 test('warmLandingCovers skips null results without caching them', async () => {
@@ -145,7 +190,7 @@ test('warmLandingCovers skips null results without caching them', async () => {
   assert.deepEqual(getCachedLandingCovers(24, seededRandom(3)), []);
 });
 
-test('warmLandingCovers continues past a failing fetch', async () => {
+test('warmLandingCovers continues past a failing warm', async () => {
   clearCoverCache();
   const pool = LANDING_POOL.slice(0, 3);
 
@@ -153,7 +198,7 @@ test('warmLandingCovers continues past a failing fetch', async () => {
     pool,
     async (_artist, album) => {
       if (album === pool[0].album) throw new Error('boom');
-      return `http://covers/${album}.jpg`;
+      return { coverUrl: `http://covers/${album}.jpg`, thumbUrl: `http://covers/${album}-w256.jpg` };
     },
     0,
   );

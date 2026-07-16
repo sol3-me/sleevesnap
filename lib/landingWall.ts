@@ -1,20 +1,4 @@
 /**
- * Deterministic RNG (mulberry32) so a per-session seed produces the same
- * wall selection on every reload — letting the service worker serve the
- * repeated cover requests from cache instead of hitting the network.
- */
-export function createSeededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/**
  * Wall tile counts by viewport width, matching the hero grid's Tailwind
  * breakpoints (grid-cols-4 / sm:6 / lg:8 at 5 rows): mobile draws fewer
  * covers than desktop.

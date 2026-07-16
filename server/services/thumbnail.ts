@@ -6,6 +6,10 @@ import { Jimp } from 'jimp';
  * `size` px wide (never upscales a smaller source) and re-encodes as JPEG so
  * a full pool of covers is a couple of MB total instead of tens.
  */
-export async function createThumbnail(_buffer: Buffer, _size = 256, _quality = 72): Promise<Buffer> {
-  return _buffer;
+export async function createThumbnail(buffer: Buffer, size = 256, quality = 72): Promise<Buffer> {
+  const image = await Jimp.fromBuffer(buffer);
+  if (image.bitmap.width > size) {
+    image.resize({ w: size });
+  }
+  return image.getBuffer('image/jpeg', { quality });
 }
