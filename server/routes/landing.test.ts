@@ -101,6 +101,18 @@ test('GET /api/landing/covers returns cached pool covers with url, artist and al
   }
 });
 
+test('GET /api/landing/covers with no count returns the whole cached pool', async () => {
+  clearCoverCache();
+  seedPoolCovers(30);
+  const { server, port } = await startTestServer(() => {});
+  try {
+    const { json } = await getJson(port, '/api/landing/covers');
+    assert.equal(json.covers.length, 30);
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test('GET /api/landing/covers honours the count query parameter', async () => {
   clearCoverCache();
   seedPoolCovers(8);
