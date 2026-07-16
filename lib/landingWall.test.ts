@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   buildWallTiles,
+  createSeededRandom,
   pickWallCovers,
   wallTileCountFor,
   type LandingCover,
@@ -21,6 +22,31 @@ function seededRandom(seed: number): () => number {
     return state / 4294967296;
   };
 }
+
+test('createSeededRandom is deterministic for a given seed', () => {
+  const a = createSeededRandom(12345);
+  const b = createSeededRandom(12345);
+  assert.deepEqual([a(), a(), a()], [b(), b(), b()]);
+});
+
+test('createSeededRandom yields values in [0, 1)', () => {
+  const r = createSeededRandom(7);
+  for (let i = 0; i < 200; i++) {
+    const v = r();
+    assert.ok(v >= 0 && v < 1, `out of range: ${v}`);
+  }
+});
+
+test('createSeededRandom gives different sequences for different seeds', () => {
+  assert.notEqual(createSeededRandom(1)(), createSeededRandom(2)());
+});
+
+test('a seeded pickWallCovers is stable across calls (cache-friendly wall)', () => {
+  const pool = Array.from({ length: 50 }, (_, n) => cover(n));
+  const first = pickWallCovers(pool, 40, createSeededRandom(999)).map((c) => c.url);
+  const second = pickWallCovers(pool, 40, createSeededRandom(999)).map((c) => c.url);
+  assert.deepEqual(first, second);
+});
 
 test('wallTileCountFor gives mobile fewer tiles than desktop', () => {
   assert.equal(wallTileCountFor(375), 20);
