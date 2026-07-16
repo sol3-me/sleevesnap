@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { RootLayout } from './components/Layout';
+import { NotFoundRedirect } from './components/NotFoundRedirect';
 import { ArtistDetailView } from './views/ArtistDetailView';
 import { CollectionView } from './views/CollectionView';
 import { DiscoverView } from './views/DiscoverView';
@@ -8,6 +9,10 @@ import { ScanView } from './views/ScanView';
 
 const rootRoute = createRootRoute({
   component: RootLayout,
+  // Covers the auth-transition edge case: right after sign-in the browser
+  // URL can still be /login or /signup (owned by publicRouter, not this
+  // tree) for a moment — bounce to / instead of a dead page.
+  notFoundComponent: NotFoundRedirect,
 });
 
 // `highlight` carries a just-confirmed "already in your collection" record
