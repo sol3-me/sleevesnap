@@ -283,7 +283,7 @@ export const Scanner: React.FC<ScannerProps> = ({
       setIsCapturing(false);
       stopCamera();
       processImage(dataUrl, 'camera');
-    }, 900);
+    }, 1400);
   }, [isVideoReady, stopCamera]);
 
   /** Shared by file-input selection and drag-and-drop. */
