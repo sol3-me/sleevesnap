@@ -1,5 +1,5 @@
 import { db } from '../db.js';
-import { fetchAndStoreCover } from './coverFetcher.js';
+import { fetchAndStoreAlbumCover } from './coverFetcher.js';
 import { LANDING_POOL, type LandingPoolEntry } from './landingPool.js';
 import type { BlobStorageProvider } from '../storage/BlobStorageProvider.js';
 
@@ -97,7 +97,7 @@ export function startLandingWarmup(storage: BlobStorageProvider, delayMs = 1200)
   warmupStarted = true;
   void warmLandingCovers(
     LANDING_POOL,
-    (artist, album) => fetchAndStoreCover(artist, album, storage),
+    (artist, album) => fetchAndStoreAlbumCover(artist, album, storage),
     delayMs,
   );
 }

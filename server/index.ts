@@ -12,6 +12,8 @@ import { searchRouter } from './routes/search.js';
 import { createCoversRouter } from './routes/covers.js';
 import { createScansRouter } from './routes/scans.js';
 import { createScanHistoryRouter } from './routes/scanHistory.js';
+import { createLandingRouter } from './routes/landing.js';
+import { startLandingWarmup } from './services/landingCovers.js';
 import { createStorageProvider } from './storage/index.js';
 import { apiLimiter, scanLimiter } from './rateLimiters.js';
 
@@ -62,6 +64,11 @@ app.use('/api/scans', apiLimiter, requireAuth, createScansRouter(storage));
 app.use('/api/scan-history', apiLimiter, requireAuth, createScanHistoryRouter(storage));
 app.use('/api/search', apiLimiter, requireAuth, searchRouter);
 app.use('/api/covers', apiLimiter, requireAuth, createCoversRouter(storage));
+
+// Deliberately public: the logged-out landing page's cover wall. Serves
+// only covers from the curated landing pool (never user data) and lazily
+// warms that pool in the background on first hit.
+app.use('/api/landing', apiLimiter, createLandingRouter(() => startLandingWarmup(storage)));
 
 // Health check
 app.get('/api/health', (_req, res) => {
