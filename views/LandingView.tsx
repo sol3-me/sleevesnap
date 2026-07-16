@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Icons } from '../components/Icons';
+import { DEMO_PHASE_MS, advanceDemo, type DemoState } from '../lib/landingDemo';
 import {
   buildWallTiles,
   pickWallCovers,
@@ -47,8 +48,26 @@ function BrandMark() {
   );
 }
 
-/** Looping scripted scan: viewfinder pulses, then the match card fades in. */
-function DemoPhone() {
+/**
+ * Looping scripted scan cycling through real pool albums: the viewfinder
+ * breathes over the cover while skeleton lines "search", the Scanner's
+ * Snap! stamp fires, then the matched card appears — and the demo moves
+ * on to the next album.
+ */
+function DemoPhone({ albums }: { albums: LandingCover[] }) {
+  const [demo, setDemo] = useState<DemoState>({ phase: 'scanning', albumIndex: 0 });
+  const albumCount = Math.max(albums.length, 1);
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDemo((state) => advanceDemo(state, albumCount)),
+      DEMO_PHASE_MS[demo.phase],
+    );
+    return () => window.clearTimeout(timer);
+  }, [demo, albumCount]);
+
+  const album = albums.length > 0 ? albums[demo.albumIndex % albums.length] : null;
+
   return (
     <div
       className="w-48 shrink-0 rounded-3xl bg-vinyl-900 border border-white/10 p-2.5"
@@ -56,28 +75,53 @@ function DemoPhone() {
     >
       <div className="rounded-2xl bg-vinyl-850 overflow-hidden">
         <div className="relative h-32 bg-vinyl-800 flex items-center justify-center">
-          <span className="w-16 h-16 rounded-sm bg-vinyl-600 flex items-center justify-center text-vinyl-muted">
-            <Icons.Disc />
-          </span>
-          <span className="absolute inset-3 rounded-lg border-2 border-vinyl-accent animate-landing-frame"></span>
+          {album ? (
+            <img src={album.url} alt="" className="w-20 h-20 rounded-sm object-cover" />
+          ) : (
+            <span className="w-16 h-16 rounded-sm bg-vinyl-600 flex items-center justify-center text-vinyl-muted">
+              <Icons.Disc />
+            </span>
+          )}
+          {demo.phase === 'scanning' && (
+            <span className="absolute inset-3 rounded-lg border-2 border-vinyl-accent animate-pulse"></span>
+          )}
+          {demo.phase === 'snap' && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="px-3 py-1 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-lg tracking-widest uppercase animate-stamp-pop">
+                Snap!
+              </div>
+            </div>
+          )}
         </div>
-        <div className="p-3 animate-landing-result">
-          <p className="text-xs font-semibold text-white">Unknown Pleasures</p>
-          <p className="text-[11px] text-gray-400 mb-2">Joy Division · 1979</p>
-          <div className="flex items-center justify-center gap-1 rounded-md bg-emerald-500/15 text-emerald-400 text-[11px] py-1">
-            <svg
-              viewBox="0 0 24 24"
-              className="w-3 h-3"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            On your shelf
-          </div>
+        <div className="p-3 min-h-[86px]">
+          {demo.phase === 'result' ? (
+            <>
+              <p className="text-xs font-semibold text-white truncate">
+                {album?.album ?? 'Your record'}
+              </p>
+              <p className="text-[11px] text-gray-400 mb-2 truncate">{album?.artist ?? ''}</p>
+              <div className="flex items-center justify-center gap-1 rounded-md bg-emerald-500/15 text-emerald-400 text-[11px] py-1">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-3 h-3"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                On your shelf
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="h-3 w-3/4 rounded bg-white/10 animate-pulse mb-2"></div>
+              <div className="h-3 w-1/2 rounded bg-white/10 animate-pulse mb-3"></div>
+              <div className="h-5 rounded-md bg-white/5 animate-pulse"></div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -122,6 +166,10 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
     () => buildWallTiles(pickWallCovers(covers, tileCount), tileCount, WALL_PALETTE),
     [covers, tileCount],
   );
+
+  // Three random pool albums for the scripted demo; already-warm wall
+  // images mean these covers are cached by the time the demo needs them.
+  const demoAlbums = useMemo(() => pickWallCovers(covers, 3), [covers]);
 
   const accentButtonClassName =
     'px-5 py-3 rounded-xl text-sm font-semibold bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition';
@@ -195,7 +243,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
         id="landing-demo"
         className="flex-1 flex flex-col sm:flex-row items-center justify-center gap-10 px-6 py-14 sm:py-20 scroll-mt-4"
       >
-        <DemoPhone />
+        <DemoPhone albums={demoAlbums} />
         <div className="max-w-md text-center sm:text-left">
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight mb-5">
             Adding a record takes about five seconds
@@ -223,9 +271,15 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
       </section>
 
       <footer className="border-t border-white/5 px-4 py-5 flex flex-wrap items-center justify-center gap-x-7 gap-y-2 text-[11px] text-gray-500">
-        <span>Runs on MusicBrainz, open music data</span>
-        <span>Your library leaves with you, any time</span>
-        <span>Free, no ads</span>
+        <span className="flex items-center gap-1.5">
+          <Icons.Database /> Runs on MusicBrainz, open music data
+        </span>
+        <span className="flex items-center gap-1.5">
+          <Icons.LockOpen /> Your library leaves with you, any time
+        </span>
+        <span className="flex items-center gap-1.5">
+          <Icons.Coins /> Free, no ads
+        </span>
       </footer>
     </div>
   );

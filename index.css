@@ -19,8 +19,6 @@
 
   --animate-spin-slow: spin 3s linear infinite;
   --animate-stamp-pop: stamp-pop 550ms cubic-bezier(0.2, 0.9, 0.3, 1.1) forwards;
-  --animate-landing-frame: landing-frame 5.5s ease-in-out infinite;
-  --animate-landing-result: landing-result 5.5s ease-in-out infinite;
 }
 
 /* Rubber-stamp "hit" for the camera shutter: overshoots big and rotated,
@@ -41,46 +39,6 @@
   100% {
     transform: scale(1) rotate(0deg);
     opacity: 0;
-  }
-}
-
-/* Landing page's scripted demo loop (views/LandingView.tsx): the two
-   animations share one 5.5s cycle — the viewfinder frame pulses first,
-   then the matched-record card fades in, holds, and resets. */
-@keyframes landing-frame {
-  0% {
-    opacity: 0.3;
-  }
-  10% {
-    opacity: 1;
-  }
-  20% {
-    opacity: 0.3;
-  }
-  30% {
-    opacity: 1;
-  }
-  40%,
-  100% {
-    opacity: 0.15;
-  }
-}
-
-@keyframes landing-result {
-  0%,
-  42% {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  50%,
-  88% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  96%,
-  100% {
-    opacity: 0;
-    transform: translateY(6px);
   }
 }
 
