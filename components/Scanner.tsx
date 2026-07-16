@@ -816,8 +816,22 @@ export const Scanner: React.FC<ScannerProps> = ({
             {/* Stamp badge — pops in and settles on capture, reinforcing the "snap". */}
             {isCapturing && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="px-6 py-2 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-2xl tracking-widest uppercase animate-stamp-pop [-webkit-text-stroke:1.5px_var(--color-snap-outline)] shadow-[0_0_0_3px_var(--color-snap-outline),inset_0_0_0_2px_var(--color-snap-outline)]">
-                  Snap!
+                <div className="relative px-6 py-2 rounded-xl border-4 border-vinyl-accent overflow-hidden animate-stamp-pop shadow-[0_0_0_2px_var(--color-snap-outline),inset_0_0_0_2px_var(--color-snap-outline)]">
+                  {/* Outline effect: a slightly larger copy of the text in the
+                      outline colour sits behind the real text and pokes out
+                      evenly on every side — avoids -webkit-text-stroke, which
+                      visibly artifacts/ghosts when combined with the animated
+                      transform above. */}
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 scale-110 font-black text-2xl tracking-widest uppercase select-none"
+                    style={{ color: 'var(--color-snap-outline)' }}
+                  >
+                    Snap!
+                  </span>
+                  <span className="relative font-black text-2xl tracking-widest uppercase text-vinyl-accent select-none">
+                    Snap!
+                  </span>
                 </div>
               </div>
             )}
