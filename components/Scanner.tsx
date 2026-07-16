@@ -816,7 +816,7 @@ export const Scanner: React.FC<ScannerProps> = ({
             {/* Stamp badge — pops in and settles on capture, reinforcing the "snap". */}
             {isCapturing && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="px-6 py-2 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-2xl tracking-widest uppercase animate-stamp-pop [-webkit-text-stroke:1px_black] shadow-[0_0_0_3px_#000]">
+                <div className="px-6 py-2 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-2xl tracking-widest uppercase animate-stamp-pop [-webkit-text-stroke:1.5px_var(--color-snap-outline)] shadow-[0_0_0_3px_var(--color-snap-outline),inset_0_0_0_2px_var(--color-snap-outline)]">
                   Snap!
                 </div>
               </div>

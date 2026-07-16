@@ -30,6 +30,26 @@ type LandingViewProps = {
   onSignUp: () => void;
 };
 
+function CameraIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+      <circle cx="12" cy="13" r="3" />
+    </svg>
+  );
+}
+
 /** Brand mark, mirroring LoginView and the in-app logo. */
 function BrandMark() {
   return (
@@ -89,7 +109,7 @@ function DemoPhone({ albums }: { albums: LandingCover[] }) {
           ></div>
           {demo.phase === 'snap' && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="px-3 py-1 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-lg tracking-widest uppercase animate-stamp-pop [-webkit-text-stroke:1px_black] shadow-[0_0_0_3px_#000]">
+              <div className="px-3 py-1 rounded-xl border-4 border-vinyl-accent text-vinyl-accent font-black text-lg tracking-widest uppercase animate-stamp-pop [-webkit-text-stroke:1.5px_var(--color-snap-outline)] shadow-[0_0_0_3px_var(--color-snap-outline),inset_0_0_0_2px_var(--color-snap-outline)]">
                 Snap!
               </div>
             </div>
@@ -182,7 +202,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
   const demoAlbums = useMemo(() => pickWallCovers(covers, 3), [covers]);
 
   const accentButtonClassName =
-    'px-5 py-3 rounded-xl text-sm font-semibold bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition';
+    'inline-flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition';
 
   return (
     // Own scroll viewport (the app shell locks <body> with overflow-hidden).
@@ -204,9 +224,10 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
           <button
             type="button"
             onClick={onSignUp}
-            className="px-3.5 py-2 rounded-lg text-sm font-medium bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border border-vinyl-accent/40 text-vinyl-accent bg-vinyl-accent/10 hover:bg-vinyl-accent/20 hover:border-vinyl-accent/60 transition-colors"
           >
-            Try a demo scan
+            <CameraIcon />
+            Scan
           </button>
         </div>
       </header>
@@ -244,6 +265,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
           </p>
           <div className="flex items-center gap-4">
             <button type="button" onClick={onSignUp} className={accentButtonClassName}>
+              <CameraIcon />
               Try a demo scan
             </button>
           </div>

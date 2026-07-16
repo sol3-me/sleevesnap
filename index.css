@@ -14,6 +14,10 @@
   --color-vinyl-accent: #ff6b6b;
   --color-vinyl-accent-soft: #ff8585;
   --color-vinyl-muted: #8b8b93;
+  /* Semi-transparent outline for the "Snap!" capture stamp (demo + real
+     Scanner) — enough to emphasise the word against busy backgrounds
+     without reading as a hard black line. */
+  --color-snap-outline: rgb(0 0 0 / 55%);
 
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
