@@ -183,8 +183,13 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
     'px-5 py-3 rounded-xl text-sm font-semibold bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition';
 
   return (
-    <div className="h-dvh overflow-y-auto bg-vinyl-950 text-white flex flex-col">
-      <header className="flex items-center px-4 sm:px-6 py-3 border-b border-white/5">
+    // Own scroll viewport (the app shell locks <body> with overflow-hidden).
+    // The inner wrapper is at least full height so the footer sits at the
+    // bottom on tall screens, but grows to natural content height on short
+    // screens so everything scrolls instead of compressing.
+    <div className="h-dvh overflow-y-auto bg-vinyl-950 text-white">
+      <div className="min-h-full flex flex-col">
+        <header className="shrink-0 flex items-center px-4 sm:px-6 py-3 border-b border-white/5">
         <BrandMark />
         <div className="ml-auto flex items-center gap-1 sm:gap-3">
           <button
@@ -204,7 +209,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
         </div>
       </header>
 
-      <section className="relative overflow-hidden border-b border-white/5">
+      <section className="shrink-0 relative overflow-hidden border-b border-white/5">
         <div className="absolute inset-0" aria-hidden="true">
           <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-1 p-1">
             {tiles.map((tile, i) =>
@@ -278,17 +283,18 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
         </div>
       </section>
 
-      <footer className="border-t border-white/5 px-4 py-5 flex flex-wrap items-center justify-center gap-x-7 gap-y-2 text-[11px] text-gray-500">
-        <span className="flex items-center gap-1.5">
-          <Icons.Database /> Runs on MusicBrainz, open music data
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Icons.LockOpen /> Your library leaves with you, any time
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Icons.Coins /> Free, no ads
-        </span>
-      </footer>
+        <footer className="shrink-0 border-t border-white/5 px-4 py-5 flex flex-wrap items-center justify-center gap-x-7 gap-y-2 text-[11px] text-gray-500">
+          <span className="flex items-center gap-1.5">
+            <Icons.Database /> Runs on MusicBrainz, open music data
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Icons.LockOpen /> Your library leaves with you, any time
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Icons.Coins /> Free, no ads
+          </span>
+        </footer>
+      </div>
     </div>
   );
 }
