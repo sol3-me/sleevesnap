@@ -27,6 +27,7 @@
 		"test:landing-route": "tsx --test server/routes/landing.test.ts",
 		"test:landing-wall": "tsx --test lib/landingWall.test.ts",
 		"test:landing-demo": "tsx --test lib/landingDemo.test.ts",
+		"test:thumbnail": "tsx --test server/services/thumbnail.test.ts",
 		"warm:landing": "tsx server/scripts/warmLandingPool.ts",
 		"preview": "vite preview",
 		"start": "node dist-server/index.js"

@@ -96,6 +96,14 @@ export function initDb(): void {
   addColumnIfMissing('discogs_url', 'TEXT');
   addColumnIfMissing('thumbnail_url', 'TEXT');
 
+  // Web-optimized thumbnail URL for landing-pool covers (full-res cover_url
+  // stays for the in-app collection view).
+  const coverCacheCols = db.pragma('table_info(cover_cache)') as Array<{ name: string }>;
+  if (!coverCacheCols.some((c) => c.name === 'thumb_url')) {
+    db.exec('ALTER TABLE cover_cache ADD COLUMN thumb_url TEXT');
+    console.log('[db] Added thumb_url column to cover_cache');
+  }
+
   console.log('[db] Database initialised at', DB_PATH);
 }
 
