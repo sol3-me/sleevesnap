@@ -30,10 +30,6 @@ type LandingViewProps = {
   onSignUp: () => void;
 };
 
-function scrollToDemo() {
-  document.getElementById('landing-demo')?.scrollIntoView({ behavior: 'smooth' });
-}
-
 /** Brand mark, mirroring LoginView and the in-app logo. */
 function BrandMark() {
   return (
@@ -201,7 +197,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
           </button>
           <button
             type="button"
-            onClick={scrollToDemo}
+            onClick={onSignUp}
             className="px-3.5 py-2 rounded-lg text-sm font-medium bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition"
           >
             Try a demo scan
@@ -244,10 +240,9 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
             anywhere. sleevesnap helps you keep track of the music you actually own.
           </p>
           <div className="flex items-center gap-4">
-            <button type="button" onClick={scrollToDemo} className={accentButtonClassName}>
+            <button type="button" onClick={onSignUp} className={accentButtonClassName}>
               Try a demo scan
             </button>
-            <span className="text-xs text-gray-400">no account needed</span>
           </div>
         </div>
       </section>
