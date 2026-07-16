@@ -6,6 +6,7 @@ import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { QUOTA_TEXT_TONE_CLASSES, ScanQuotaBanner, quotaTone } from '../components/ScanQuotaBanner';
 import { bestGuess, confidenceTier, confidenceTierLabel, guessToFields } from '../lib/aiGuessFields';
 import { triggerImageDownload } from '../lib/downloadImage';
+import { SNAP_TEXT_OUTLINE } from '../lib/snapOutline';
 import { logEvent, logWarn } from '../services/telemetry';
 import {
   appendScanHistorySearch,
@@ -817,19 +818,19 @@ export const Scanner: React.FC<ScannerProps> = ({
             {isCapturing && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="relative px-6 py-2 rounded-xl border-4 border-vinyl-accent overflow-hidden animate-stamp-pop shadow-[0_0_0_2px_var(--color-snap-outline),inset_0_0_0_2px_var(--color-snap-outline)]">
-                  {/* Outline effect: a slightly larger copy of the text in the
-                      outline colour sits behind the real text and pokes out
-                      evenly on every side — avoids -webkit-text-stroke, which
-                      visibly artifacts/ghosts when combined with the animated
+                  {/* Outline via 8-direction text-shadow, a fixed pixel offset
+                      in every direction — unlike scaling a duplicate copy of
+                      the text (which grows the halo in proportion to the
+                      text block's own width/height, spilling out the sides
+                      of a wide tracked-out word far more than top/bottom),
+                      this stays even on all sides regardless of aspect
+                      ratio. Also avoids -webkit-text-stroke, which visibly
+                      artifacts/ghosts when combined with the animated
                       transform above. */}
                   <span
-                    aria-hidden="true"
-                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 scale-110 font-black text-2xl tracking-widest uppercase select-none"
-                    style={{ color: 'var(--color-snap-outline)' }}
+                    className="font-black text-2xl tracking-widest uppercase text-vinyl-accent select-none"
+                    style={{ textShadow: SNAP_TEXT_OUTLINE }}
                   >
-                    Snap!
-                  </span>
-                  <span className="relative font-black text-2xl tracking-widest uppercase text-vinyl-accent select-none">
                     Snap!
                   </span>
                 </div>

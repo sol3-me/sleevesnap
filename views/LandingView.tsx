@@ -7,6 +7,7 @@ import {
   wallTileCountFor,
   type LandingCover,
 } from '../lib/landingWall';
+import { SNAP_TEXT_OUTLINE } from '../lib/snapOutline';
 
 // Muted sleeve-ish tones for tiles the cover cache can't fill yet, so a
 // cold cache still reads as a wall of records rather than a broken grid.
@@ -110,19 +111,18 @@ function DemoPhone({ albums }: { albums: LandingCover[] }) {
           {demo.phase === 'snap' && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="relative px-3 py-1 rounded-xl border-4 border-vinyl-accent overflow-hidden animate-stamp-pop shadow-[0_0_0_2px_var(--color-snap-outline),inset_0_0_0_2px_var(--color-snap-outline)]">
-                {/* Outline effect: a slightly larger copy of the text in the
-                    outline colour sits behind the real text and pokes out
-                    evenly on every side — avoids -webkit-text-stroke, which
+                {/* Outline via 8-direction text-shadow (lib/snapOutline.ts) —
+                    a fixed pixel offset in every direction, so it stays even
+                    on all sides regardless of the text block's own aspect
+                    ratio (unlike a scaled duplicate copy, which spills out
+                    the sides of a wide tracked-out word far more than
+                    top/bottom). Also avoids -webkit-text-stroke, which
                     visibly artifacts/ghosts when combined with the animated
                     transform above. */}
                 <span
-                  aria-hidden="true"
-                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 scale-110 font-black text-lg tracking-widest uppercase select-none"
-                  style={{ color: 'var(--color-snap-outline)' }}
+                  className="font-black text-lg tracking-widest uppercase text-vinyl-accent select-none"
+                  style={{ textShadow: SNAP_TEXT_OUTLINE }}
                 >
-                  Snap!
-                </span>
-                <span className="relative font-black text-lg tracking-widest uppercase text-vinyl-accent select-none">
                   Snap!
                 </span>
               </div>
