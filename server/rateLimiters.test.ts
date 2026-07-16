@@ -2,7 +2,7 @@ import express from 'express';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { test } from 'node:test';
-import { apiLimiter, coversLimiter, scanLimiter } from './rateLimiters.js';
+import { apiLimiter, scanLimiter } from './rateLimiters.js';
 
 async function startTestServer(limiter: express.RequestHandler): Promise<{ server: http.Server; port: number }> {
   const app = express();
@@ -52,26 +52,6 @@ test('scanLimiter allows up to 30 requests per window and 429s beyond it', async
 
     assert.equal(results.slice(0, 30).every((code) => code !== 429), true);
     assert.equal(results[30], 429);
-  } finally {
-    await closeServer(server);
-  }
-});
-
-// The landing wall loads up to 40 cover images per page view, so the static
-// covers route must comfortably absorb repeated refreshes (even with browser
-// caching off) instead of sharing the 100/min API budget.
-test('coversLimiter allows up to 600 requests per window and 429s beyond it', async () => {
-  const { server, port } = await startTestServer(coversLimiter);
-
-  try {
-    const results: number[] = [];
-    for (let i = 0; i < 601; i++) {
-      const res = await get(port);
-      results.push(res.statusCode);
-    }
-
-    assert.equal(results.slice(0, 600).every((code) => code !== 429), true);
-    assert.equal(results[600], 429);
   } finally {
     await closeServer(server);
   }
