@@ -1,3 +1,25 @@
+/**
+ * Wall tile counts by viewport width, matching the hero grid's Tailwind
+ * breakpoints (grid-cols-4 / sm:6 / lg:8 at 5 rows): mobile draws fewer
+ * covers than desktop.
+ */
+export function wallTileCountFor(_width: number): number {
+  return 0;
+}
+
+/**
+ * Client-side wall selection: draws `count` distinct covers by pushing
+ * RNG-picked indices into a hash set until it has enough (returns all
+ * covers when the pool is smaller than `count`).
+ */
+export function pickWallCovers(
+  _covers: readonly LandingCover[],
+  _count: number,
+  _random: () => number = Math.random,
+): LandingCover[] {
+  return [];
+}
+
 export type WallTile =
   | { kind: 'cover'; url: string; artist: string; album: string }
   | { kind: 'placeholder'; color: string };
