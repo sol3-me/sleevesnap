@@ -6,10 +6,11 @@ _Captured 2026-07-16, right after Firebase Authentication merged to main._
 
 ## Observability
 
-- [ ] Telemetry for which accounts are using AI vision tokens (cost/usage attribution per user, ties into the shared daily vision quota)
+- [ ] Telemetry for which accounts are using AI vision tokens (cost/usage attribution per user — the daily vision quota is now per-user, so this is about spend visibility, not fairness)
 - [ ] General custom-event telemetry: scans (success/fail), MusicBrainz timeouts/errors, etc. — `services/telemetry.ts` today is just a `console.log` shim (mirrors `server/logger.ts`'s bracket-tag style), not a real event pipeline, so this is new infra, not an upgrade
 - [ ] Uptime alerts + health checks (Ben mentioned "pangolin?" as a possible tool to look into)
 - [ ] Show the site's release/version number somewhere
+- [ ] Consider adding back a deployment-wide vision-spend ceiling — moving the AI-scan quota to per-user (2026-07-16) removed the old shared counter's hard cap on total vision-API spend; VISION_DAILY_LIMIT now bounds each user individually, so spend scales with active users
 
 ## Account & user management
 
@@ -46,3 +47,4 @@ _Captured 2026-07-16, right after Firebase Authentication merged to main._
 ## Branding
 
 - [ ] Add "made by sol3uk" next to the "powered by musicbrainz" credit line (`components/Layout.tsx` — `Logo`/credit block)
+- [ ] Standardise and improve the looks of the validation emails the user gets, as well as the landing page after validation, they're currently all very generic
