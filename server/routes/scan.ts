@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { db, getVisionCallCount, incrementVisionCallCount } from '../db.js';
+import { db, getUserVisionCallCount, incrementUserVisionCallCount } from '../db.js';
 import { computeHash, hammingDistance } from '../imageHash.js';
 import { logEvent, logWarn, newRequestId } from '../logger.js';
 import { identifyVinyl, VisionScanResult } from '../services/visionProvider/index.js';
@@ -164,7 +164,7 @@ scanRouter.post('/', async (req, res) => {
     threshold: MATCH_THRESHOLD,
   });
 
-  const visionResult = await getVisionSuggestions(imageBuffer, req.header('x-vision-admin-key'), requestId);
+  const visionResult = await getVisionSuggestions(imageBuffer, uid, req.header('x-vision-admin-key'), requestId);
 
   logEvent('scan', requestId, 'Request complete', {
     matched: false,
@@ -192,9 +192,14 @@ const DEFAULT_VALIDATION_GUESSES = 3;
  * Read-only view of today's AI-scan allowance, for the client to show the
  * user how many scans they have left — never increments the counter.
  */
-scanRouter.get('/quota', (_req, res) => {
+scanRouter.get('/quota', (req, res) => {
+  const uid = req.user?.uid;
+  if (!uid) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
   const dateKey = new Date().toISOString().slice(0, 10);
-  const used = getVisionCallCount(dateKey);
+  const used = getUserVisionCallCount(dateKey, uid);
   const limit = Number(process.env.VISION_DAILY_LIMIT ?? DEFAULT_VISION_DAILY_LIMIT);
   const remaining = Math.max(0, limit - used);
   res.json({ used, limit, remaining });
@@ -202,14 +207,16 @@ scanRouter.get('/quota', (_req, res) => {
 
 /**
  * Runs the vision-assisted identification + MusicBrainz validation flow for
- * a photo that didn't match anything in the collection. Enforces a global
- * daily cap on vision-provider calls (deliberately shared across all users —
- * it exists to bound the deployment's total vision-API spend, not to ration
- * fairly per user) with an optional admin bypass. Never throws — any failure degrades to "no suggestions", which the
- * client already treats identically to today's plain no-match state.
+ * a photo that didn't match anything in the collection. Enforces a per-user
+ * daily cap on vision-provider calls (each user gets their own allowance,
+ * configured by the same VISION_DAILY_LIMIT for everyone) with an optional
+ * admin bypass. Never throws — any failure degrades to "no suggestions",
+ * which the client already treats identically to today's plain no-match
+ * state.
  */
 async function getVisionSuggestions(
   imageBuffer: Buffer,
+  uid: string,
   adminHeaderValue: string | undefined,
   requestId: string,
 ): Promise<VisionSuggestionsResult> {
@@ -217,7 +224,7 @@ async function getVisionSuggestions(
   const adminKey = process.env.VISION_ADMIN_KEY;
   const isAdminBypass = Boolean(adminKey) && adminHeaderValue === adminKey;
 
-  const count = incrementVisionCallCount(dateKey);
+  const count = incrementUserVisionCallCount(dateKey, uid);
   const limit = Number(process.env.VISION_DAILY_LIMIT ?? DEFAULT_VISION_DAILY_LIMIT);
 
   logEvent('scan', requestId, 'Vision daily cap check', { count, limit, dateKey, adminBypass: isAdminBypass });

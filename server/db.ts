@@ -48,9 +48,11 @@ export function initDb(): void {
       fetched_at  INTEGER NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS vision_call_tracker (
-      date        TEXT PRIMARY KEY,
-      call_count  INTEGER NOT NULL
+    CREATE TABLE IF NOT EXISTS user_vision_call_tracker (
+      date        TEXT NOT NULL,
+      user_id     TEXT NOT NULL,
+      call_count  INTEGER NOT NULL,
+      PRIMARY KEY (date, user_id)
     );
 
     CREATE TABLE IF NOT EXISTS scan_history (
@@ -98,34 +100,34 @@ export function initDb(): void {
 }
 
 /**
- * Atomically increments and returns today's vision-call counter for `date`
- * (YYYY-MM-DD). Used to enforce the global daily cap on AI vision calls.
+ * Atomically increments and returns a user's vision-call counter for `date`
+ * (YYYY-MM-DD). Used to enforce each user's daily cap on AI vision calls.
  *
  * Synchronous and called before any `await` in the caller, so there's no
  * race window across concurrent requests: better-sqlite3 is synchronous and
  * Node is single-threaded, so this statement always completes atomically
  * before another request's handler can run.
  */
-export function incrementVisionCallCount(date: string): number {
+export function incrementUserVisionCallCount(date: string, userId: string): number {
   const row = db
     .prepare(
-      `INSERT INTO vision_call_tracker (date, call_count) VALUES (?, 1)
-       ON CONFLICT(date) DO UPDATE SET call_count = call_count + 1
+      `INSERT INTO user_vision_call_tracker (date, user_id, call_count) VALUES (?, ?, 1)
+       ON CONFLICT(date, user_id) DO UPDATE SET call_count = call_count + 1
        RETURNING call_count`,
     )
-    .get(date) as { call_count: number };
+    .get(date, userId) as { call_count: number };
   return row.call_count;
 }
 
 /**
- * Reads today's vision-call counter for `date` (YYYY-MM-DD) without
+ * Reads a user's vision-call counter for `date` (YYYY-MM-DD) without
  * incrementing it — used to show the user their remaining daily scan
- * allowance. Returns 0 for a date with no recorded calls.
+ * allowance. Returns 0 for a user/date with no recorded calls.
  */
-export function getVisionCallCount(date: string): number {
-  const row = db.prepare('SELECT call_count FROM vision_call_tracker WHERE date = ?').get(date) as
-    | { call_count: number }
-    | undefined;
+export function getUserVisionCallCount(date: string, userId: string): number {
+  const row = db
+    .prepare('SELECT call_count FROM user_vision_call_tracker WHERE date = ? AND user_id = ?')
+    .get(date, userId) as { call_count: number } | undefined;
   return row?.call_count ?? 0;
 }
 
