@@ -3,8 +3,10 @@
  * breakpoints (grid-cols-4 / sm:6 / lg:8 at 5 rows): mobile draws fewer
  * covers than desktop.
  */
-export function wallTileCountFor(_width: number): number {
-  return 0;
+export function wallTileCountFor(width: number): number {
+  if (width < 640) return 20;
+  if (width < 1024) return 30;
+  return 40;
 }
 
 /**
@@ -13,11 +15,16 @@ export function wallTileCountFor(_width: number): number {
  * covers when the pool is smaller than `count`).
  */
 export function pickWallCovers(
-  _covers: readonly LandingCover[],
-  _count: number,
-  _random: () => number = Math.random,
+  covers: readonly LandingCover[],
+  count: number,
+  random: () => number = Math.random,
 ): LandingCover[] {
-  return [];
+  const target = Math.min(Math.max(count, 0), covers.length);
+  const indices = new Set<number>();
+  while (indices.size < target) {
+    indices.add(Math.floor(random() * covers.length));
+  }
+  return [...indices].map((i) => covers[i]);
 }
 
 export type WallTile =
