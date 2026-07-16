@@ -234,10 +234,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
           <div className="absolute inset-0 bg-vinyl-950/80"></div>
         </div>
 
-        <div className="relative flex flex-col items-center text-center px-6 py-16 sm:py-24">
-          <p className="text-vinyl-accent text-[11px] sm:text-xs font-semibold tracking-[0.18em] uppercase mb-3">
-            For people who still buy the record
-          </p>
+        <div className="relative w-full flex flex-col items-center text-center px-6 py-16 sm:py-24">
           <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-4">
             Your music. Actually yours.
           </h1>
