@@ -175,7 +175,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
     'px-5 py-3 rounded-xl text-sm font-semibold bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition';
 
   return (
-    <div className="min-h-dvh bg-vinyl-950 text-white flex flex-col">
+    <div className="h-dvh overflow-y-auto bg-vinyl-950 text-white flex flex-col">
       <header className="flex items-center px-4 sm:px-6 py-3 border-b border-white/5">
         <BrandMark />
         <div className="ml-auto flex items-center gap-1 sm:gap-3">
