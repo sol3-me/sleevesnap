@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Icons } from '../components/Icons';
-import { buildWallTiles, type LandingCover } from '../lib/landingWall';
-
-const WALL_TILE_COUNT = 32;
+import {
+  buildWallTiles,
+  pickWallCovers,
+  wallTileCountFor,
+  type LandingCover,
+} from '../lib/landingWall';
 
 // Muted sleeve-ish tones for tiles the cover cache can't fill yet, so a
 // cold cache still reads as a wall of records rather than a broken grid.
@@ -89,10 +92,12 @@ function DemoPhone() {
  */
 export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
   const [covers, setCovers] = useState<LandingCover[]>([]);
+  const [tileCount, setTileCount] = useState(() => wallTileCountFor(window.innerWidth));
 
+  // One fetch of the full self-hosted pool; selection happens client-side.
   useEffect(() => {
     let cancelled = false;
-    void fetch(`/api/landing/covers?count=${WALL_TILE_COUNT}`)
+    void fetch('/api/landing/covers?count=999')
       .then((res) => (res.ok ? res.json() : { covers: [] }))
       .then((data: { covers?: LandingCover[] }) => {
         if (!cancelled && Array.isArray(data.covers)) setCovers(data.covers);
@@ -105,7 +110,18 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
     };
   }, []);
 
-  const tiles = useMemo(() => buildWallTiles(covers, WALL_TILE_COUNT, WALL_PALETTE), [covers]);
+  // Fewer tiles on mobile, more on desktop; wallTileCountFor returns
+  // bucketed values, so resize only re-renders on a breakpoint change.
+  useEffect(() => {
+    const onResize = () => setTileCount(wallTileCountFor(window.innerWidth));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const tiles = useMemo(
+    () => buildWallTiles(pickWallCovers(covers, tileCount), tileCount, WALL_PALETTE),
+    [covers, tileCount],
+  );
 
   const accentButtonClassName =
     'px-5 py-3 rounded-xl text-sm font-semibold bg-vinyl-accent text-vinyl-950 hover:brightness-110 active:scale-[0.99] transition';
