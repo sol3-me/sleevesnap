@@ -979,8 +979,23 @@ export const Scanner: React.FC<ScannerProps> = ({
           {/* Search fields — a persistent toggle bar (search icon + summary
               when collapsed, "Search details" when open) collapses/expands
               the form, so the results stay visible without scrolling past
-              it once there's something to search for. */}
+              it once there's something to search for. The AI-suggestion
+              pills live outside the toggle entirely: picking a whole guess
+              is a one-tap action that shouldn't require expanding the form
+              first, and shouldn't disappear when it's collapsed. */}
           <div className="flex flex-col gap-2">
+            {aiGuesses.length > 0 && (
+              <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+                <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">
+                  AI suggestions{aiGuesses.some((g) => g.validated) ? ' · ✓ found on MusicBrainz' : ''}
+                </p>
+                <AiGuessChips guesses={aiGuesses} onApplyGuess={applyGuess} />
+                <p className="text-[11px] text-gray-500 mt-2">
+                  AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
+                </p>
+              </div>
+            )}
+
             <button
               onClick={() => setIsSearchFormExpanded((expanded) => !expanded)}
               aria-expanded={isSearchFormExpanded}
@@ -1003,34 +1018,18 @@ export const Scanner: React.FC<ScannerProps> = ({
 
             {isSearchFormExpanded && (
               <>
-                {aiGuesses.length > 0 ? (
-                  <>
-                    {/* AI suggestion pills — kept visually separate from the
-                        editable fields below so picking a whole guess reads
-                        as a distinct action from editing individual fields. */}
-                    <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
-                      <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">
-                        AI suggestions{aiGuesses.some((g) => g.validated) ? ' · ✓ found on MusicBrainz' : ''}
-                      </p>
-                      <AiGuessChips guesses={aiGuesses} onApplyGuess={applyGuess} />
-                    </div>
-                    <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
-                      <AiGuessSearchFields
-                        guesses={aiGuesses}
-                        value={searchFields}
-                        onChange={setSearchFields}
-                        onSubmit={handleSearch}
-                      />
-                      <p className="text-[11px] text-gray-500 mt-2">
-                        AI guesses can confuse label text with album titles. Treat these as smart starting points, not final matches.
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+                <div className="bg-vinyl-900/70 border border-white/10 rounded-xl p-3">
+                  {aiGuesses.length > 0 ? (
+                    <AiGuessSearchFields
+                      guesses={aiGuesses}
+                      value={searchFields}
+                      onChange={setSearchFields}
+                      onSubmit={handleSearch}
+                    />
+                  ) : (
                     <AdvancedSearchFields value={searchFields} onChange={setSearchFields} onSubmit={handleSearch} />
-                  </div>
-                )}
+                  )}
+                </div>
                 <button
                   onClick={handleSearch}
                   disabled={stage === 'searching' || !hasAnyIntentField(searchFields)}
