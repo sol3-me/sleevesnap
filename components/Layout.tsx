@@ -179,7 +179,7 @@ export function RootLayout() {
             </nav>
           )}
         </main>
-        <Toaster theme="dark" position="bottom-right" />
+        <Toaster theme="dark" position="top-center" richColors />
       </div>
     </ScanProvider>
   );

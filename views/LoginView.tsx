@@ -1,39 +1,10 @@
-import { FirebaseError } from 'firebase/app';
 import React, { useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
+import { describeAuthFieldError } from '../lib/authErrors';
+import { validateAuthFields, type AuthFieldErrors } from '../lib/signupValidation';
 
 type EmailMode = 'sign-in' | 'sign-up';
-
-/** Maps Firebase's error codes to copy a human can act on. */
-function describeAuthError(err: unknown): string | null {
-  if (err instanceof FirebaseError) {
-    switch (err.code) {
-      case 'auth/popup-closed-by-user':
-      case 'auth/cancelled-popup-request':
-        return null; // the user changed their mind — not an error worth toasting
-      case 'auth/invalid-credential':
-      case 'auth/wrong-password':
-      case 'auth/user-not-found':
-        return 'Email or password is incorrect.';
-      case 'auth/email-already-in-use':
-        return 'An account with this email already exists — try signing in instead.';
-      case 'auth/weak-password':
-        return 'Password needs to be at least 6 characters.';
-      case 'auth/invalid-email':
-        return "That doesn't look like a valid email address.";
-      case 'auth/account-exists-with-different-credential':
-        return 'This email is already linked to a different sign-in method — try the provider you used before.';
-      case 'auth/too-many-requests':
-        return 'Too many attempts — wait a moment and try again.';
-      case 'auth/popup-blocked':
-        return 'Your browser blocked the sign-in popup — allow popups for this site and retry.';
-      default:
-        return `Sign-in failed (${err.code}).`;
-    }
-  }
-  return 'Sign-in failed. Please try again.';
-}
 
 function ProviderIcon({ path }: { path: string }) {
   return (
@@ -56,6 +27,12 @@ export function LoginView() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<AuthFieldErrors>({});
+
+  const switchMode = (next: EmailMode) => {
+    setMode(next);
+    setFieldErrors({});
+  };
 
   const run = async (label: string, action: () => Promise<void>) => {
     if (busy) return;
@@ -63,8 +40,13 @@ export function LoginView() {
     try {
       await action();
     } catch (err) {
-      const message = describeAuthError(err);
-      if (message) toast.error(message);
+      const result = describeAuthFieldError(err);
+      if (!result) return;
+      if (result.field) {
+        setFieldErrors((prev) => ({ ...prev, [result.field as 'email' | 'password']: result.message }));
+      } else {
+        toast.error(result.message);
+      }
     } finally {
       setBusy(null);
     }
@@ -72,6 +54,10 @@ export function LoginView() {
 
   const submitEmailForm = (event: React.FormEvent) => {
     event.preventDefault();
+    const errors = validateAuthFields(email, password, mode);
+    setFieldErrors(errors);
+    if (errors.email || errors.password) return;
+
     if (mode === 'sign-in') {
       void run('email', () => signInWithEmail(email, password));
     } else {
@@ -95,8 +81,12 @@ export function LoginView() {
 
   const providerButtonClassName =
     'flex items-center justify-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-medium bg-white/5 border border-white/10 text-white hover:bg-white/10 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none';
-  const inputClassName =
-    'w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder-gray-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-vinyl-accent';
+  const inputClassName = (hasError: boolean) =>
+    `w-full px-4 py-3 rounded-xl bg-white/5 border text-sm text-white placeholder-gray-500 focus:outline-none focus-visible:ring-2 ${
+      hasError
+        ? 'border-red-500/60 focus-visible:ring-red-500'
+        : 'border-white/10 focus-visible:ring-vinyl-accent'
+    }`;
 
   return (
     <div className="min-h-dvh flex items-center justify-center bg-vinyl-950 text-white px-4">
@@ -111,10 +101,21 @@ export function LoginView() {
           </span>
         </div>
 
-        <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-6 space-y-4">
-          <h1 className="text-lg font-semibold text-center">
-            {mode === 'sign-in' ? 'Sign in to your collection' : 'Create your account'}
-          </h1>
+        <div
+          className={`rounded-2xl bg-white/[0.03] border p-6 space-y-4 transition-colors ${
+            mode === 'sign-up' ? 'border-vinyl-accent/30' : 'border-white/10'
+          }`}
+        >
+          <div className="text-center space-y-1">
+            <h1 className="text-lg font-semibold">
+              {mode === 'sign-in' ? 'Welcome back' : 'Start your collection'}
+            </h1>
+            <p className="text-xs text-gray-400">
+              {mode === 'sign-in'
+                ? 'Sign in to pick up where you left off.'
+                : 'Save your scans and grow your collection from anywhere.'}
+            </p>
+          </div>
 
           <button
             type="button"
@@ -138,26 +139,47 @@ export function LoginView() {
             <span className="h-px flex-1 bg-white/10" />
           </div>
 
-          <form onSubmit={submitEmailForm} className="space-y-3">
-            <input
-              type="email"
-              autoComplete="email"
-              required
-              placeholder="you@example.com"
-              className={inputClassName}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <input
-              type="password"
-              autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
-              required
-              minLength={6}
-              placeholder="Password"
-              className={inputClassName}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+          <form onSubmit={submitEmailForm} className="space-y-3" noValidate>
+            <div>
+              <input
+                type="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                className={inputClassName(Boolean(fieldErrors.email))}
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                }}
+                aria-invalid={Boolean(fieldErrors.email)}
+                aria-describedby={fieldErrors.email ? 'email-error' : undefined}
+              />
+              {fieldErrors.email && (
+                <p id="email-error" role="alert" className="mt-1.5 text-xs text-red-400">
+                  {fieldErrors.email}
+                </p>
+              )}
+            </div>
+            <div>
+              <input
+                type="password"
+                autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
+                placeholder="Password"
+                className={inputClassName(Boolean(fieldErrors.password))}
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                }}
+                aria-invalid={Boolean(fieldErrors.password)}
+                aria-describedby={fieldErrors.password ? 'password-error' : undefined}
+              />
+              {fieldErrors.password && (
+                <p id="password-error" role="alert" className="mt-1.5 text-xs text-red-400">
+                  {fieldErrors.password}
+                </p>
+              )}
+            </div>
             <button
               type="submit"
               disabled={busy !== null}
@@ -175,7 +197,7 @@ export function LoginView() {
             <button
               type="button"
               className="hover:text-white transition-colors"
-              onClick={() => setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
+              onClick={() => switchMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
             >
               {mode === 'sign-in' ? 'New here? Create an account' : 'Have an account? Sign in'}
             </button>
@@ -195,7 +217,7 @@ export function LoginView() {
           Your collection is private to your account.
         </p>
       </div>
-      <Toaster theme="dark" position="bottom-right" />
+      <Toaster theme="dark" position="top-center" richColors />
     </div>
   );
 }
