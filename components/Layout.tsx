@@ -1,5 +1,6 @@
 import { Link, Outlet, useLocation } from '@tanstack/react-router';
 import type { User } from 'firebase/auth';
+import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { ScanProvider } from '../contexts/ScanContext';
@@ -105,6 +106,48 @@ function MobileSignOutButton() {
   );
 }
 
+interface LatestRelease {
+  tag_name?: string;
+  html_url?: string;
+}
+
+/** Live release tag from GitHub Releases, falling back to the build-time version until one exists. */
+function VersionBadge() {
+  const [release, setRelease] = useState<LatestRelease | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('https://api.github.com/repos/sol3-me/sleevesnap/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+    })
+      .then((res) => (res.ok ? (res.json() as Promise<LatestRelease>) : null))
+      .then((data) => {
+        if (!cancelled && data?.tag_name) setRelease(data);
+      })
+      .catch(() => {
+        // Keep the build-time fallback if the request fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (release?.tag_name) {
+    return (
+      <a
+        href={release.html_url ?? 'https://github.com/sol3-me/sleevesnap/releases/latest'}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hover:text-gray-300 transition-colors"
+      >
+        {release.tag_name}
+      </a>
+    );
+  }
+
+  return <span>v{__APP_VERSION__}</span>;
+}
+
 /** The brand mark: a tiny vinyl record next to the wordmark. */
 function Logo() {
   return (
@@ -163,7 +206,7 @@ export function RootLayout() {
               >
                 made by sol3uk
               </a>
-              <span>v{__APP_VERSION__}</span>
+              <VersionBadge />
             </div>
           </div>
         </aside>
