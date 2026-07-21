@@ -16,6 +16,9 @@ dist-server
 # Runtime data / SQLite DB
 data/
 
+# Seeded Firebase Auth Emulator data (npm run dev:emulators)
+.firebase-emulator-data/
+
 # Environment files
 .env
 .env.*
