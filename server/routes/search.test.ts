@@ -2,9 +2,15 @@ import express from 'express';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+// db.ts reads CACHE_DB_PATH at module load time, so it must be set before
+// the module (and anything that transitively imports it) is loaded.
+const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sleevesnap-search-test-'));
+process.env.CACHE_DB_PATH = path.join(scratchDir, 'cache.db');
 
 // The gateway's outbound rate limiter reads this at module load time (see
 // musicbrainzCatalogGateway.ts), so it must be set before that module (and
@@ -12,7 +18,10 @@ import { fileURLToPath } from 'node:url';
 // directly and don't need real inter-request spacing.
 process.env.MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = '0';
 
+const { initDb } = await import('../db.js');
 const { searchReleasesByText, searchRouter } = await import('./search.js');
+
+initDb();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -300,6 +309,136 @@ test('GET group releases returns 502 (not a false-success empty list) when Music
     try {
         const res = await requestJson(port, '/api/search/groups/rate-limited-group/releases');
         assert.equal(res.statusCode, 502, 'a persistent MusicBrainz failure must not look like a successful empty result');
+    } finally {
+        await closeServer(server);
+    }
+});
+
+// --- Server-side release-group cache -----------------------------------
+// enrichCandidate (search time) and getReleaseGroupReleases (expand time)
+// used to independently fetch the same release-group's full release list
+// from MusicBrainz — doubling calls for every group a user ever expanded,
+// and contributing to the rate-limit bursts fixed above. These verify a
+// shared, persistent server-side cache eliminates the duplicate fetch.
+
+test('GET group releases only fetches from MusicBrainz once across repeated requests (server-side cache)', async () => {
+    let releaseCallCount = 0;
+    let discogsCallCount = 0;
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release') {
+            releaseCallCount++;
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'cached-release-1',
+                        title: 'Cached Album',
+                        date: '2010-01-01',
+                        media: [{ format: 'CD' }],
+                        'artist-credit': [{ artist: { name: 'Cache Test Artist' } }],
+                        'release-group': { id: 'cache-test-group', title: 'Cached Album', 'primary-type': 'Album' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            discogsCallCount++;
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const first = await requestJson(port, '/api/search/groups/cache-test-group/releases');
+        assert.equal(first.statusCode, 200);
+        assert.equal(first.json.releases.length, 1);
+
+        const second = await requestJson(port, '/api/search/groups/cache-test-group/releases');
+        assert.equal(second.statusCode, 200);
+        // dateAdded is deliberately re-stamped fresh on every read (cached or
+        // not) — see mapRelease — so compare everything else instead of a
+        // full deepEqual.
+        assert.equal(second.json.releases[0].musicBrainzId, first.json.releases[0].musicBrainzId);
+        assert.equal(second.json.releases[0].format, first.json.releases[0].format);
+
+        assert.equal(releaseCallCount, 1, 'second request should be served from the server-side cache, not refetch MusicBrainz');
+        assert.equal(discogsCallCount, 1, 'discogs master lookup result should also be cached after the first request');
+    } finally {
+        await closeServer(server);
+    }
+});
+
+test('POST /api/search/groups warms the release-group cache so a later GET .../releases reuses it', async () => {
+    let releaseCallCount = 0;
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release-group') {
+            return jsonResponse({
+                count: 1,
+                'release-groups': [
+                    {
+                        id: 'warm-test-group',
+                        title: 'Warm Test Album',
+                        'first-release-date': '2012-01-01',
+                        'primary-type': 'Album',
+                        'artist-credit': [{ artist: { name: 'Warm Test Artist' } }],
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname === '/ws/2/release') {
+            releaseCallCount++;
+            return jsonResponse({
+                releases: [
+                    {
+                        id: 'warm-release-1',
+                        title: 'Warm Test Album',
+                        media: [{ format: 'CD' }],
+                        'artist-credit': [{ artist: { name: 'Warm Test Artist' } }],
+                        'release-group': { id: 'warm-test-group', title: 'Warm Test Album' },
+                    },
+                ],
+            });
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const searchRes = await requestJson(port, '/api/search/groups', 'POST', {
+            query: 'Warm Test Album',
+            page: 1,
+            pageSize: 5,
+        });
+        assert.equal(searchRes.statusCode, 200);
+        assert.equal(releaseCallCount, 1, 'search-time enrichment should have fetched the release list once');
+
+        const releasesRes = await requestJson(port, '/api/search/groups/warm-test-group/releases');
+        assert.equal(releasesRes.statusCode, 200);
+        assert.equal(releasesRes.json.releases.length, 1);
+
+        assert.equal(
+            releaseCallCount,
+            1,
+            'expanding the group afterward should reuse the cache warmed by the search, not refetch MusicBrainz',
+        );
     } finally {
         await closeServer(server);
     }
