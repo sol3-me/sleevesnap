@@ -79,6 +79,67 @@ export function groupReleasesByFormatBucket<T extends { format?: string }>(
   }));
 }
 
+export interface ReleaseVariantGroup<T> {
+  format: string;
+  year: string;
+  releases: T[];
+  /** The pressing shown by default and used for the one-click action — see pickRepresentativeRelease. */
+  representative: T;
+}
+
+// "XW" (Worldwide) is MusicBrainz's own code for a release not tied to any
+// single country — the closest thing to a canonical, region-agnostic
+// pressing, so it's the best default when one exists.
+const WORLDWIDE_COUNTRY_CODE = 'XW';
+
+// Exported so quick-add (picking one release for the whole group, not just
+// within a single format+year variant) can reuse the same priority.
+export function pickRepresentativeRelease<T extends { country?: string; releaseDate?: string }>(releases: T[]): T {
+  const worldwide = releases.find((release) => release.country === WORLDWIDE_COUNTRY_CODE);
+  if (worldwide) return worldwide;
+
+  const dated = releases.filter((release) => release.releaseDate);
+  if (dated.length > 0) {
+    return dated.reduce((earliest, release) =>
+      release.releaseDate! < earliest.releaseDate! ? release : earliest,
+    );
+  }
+
+  return releases[0];
+}
+
+// Same album/format/year pressed in a dozen countries reads as spam in an
+// expanded release list — group them into one variant so the default view
+// shows one entry per real edition, with the full region list available to
+// power users who want a specific pressing. Deliberately keyed on the exact
+// format string (not the coarser Vinyl/CD bucket above): a 12" and a 7"
+// pressed the same year are different physical products, not variants of
+// each other.
+export function groupReleasesByFormatAndYear<
+  T extends { format?: string; year?: string; country?: string; releaseDate?: string },
+>(releases: T[]): ReleaseVariantGroup<T>[] {
+  const order: string[] = [];
+  const byKey = new Map<string, { format: string; year: string; releases: T[] }>();
+
+  for (const release of releases) {
+    const format = release.format ?? 'Unknown';
+    const year = release.year ?? 'Unknown';
+    const key = `${format}::${year}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.releases.push(release);
+    } else {
+      byKey.set(key, { format, year, releases: [release] });
+      order.push(key);
+    }
+  }
+
+  return order.map((key) => {
+    const entry = byKey.get(key)!;
+    return { ...entry, representative: pickRepresentativeRelease(entry.releases) };
+  });
+}
+
 // Sparse: only buckets the user has explicitly toggled are stored. Anything
 // absent (including a bucket never seen before) defaults to checked/visible
 // — the goal is to extract as much signal from MusicBrainz as possible

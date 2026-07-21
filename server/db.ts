@@ -55,6 +55,15 @@ export function initDb(): void {
       PRIMARY KEY (date, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS release_group_cache (
+      release_group_id   TEXT PRIMARY KEY,
+      available_formats  TEXT NOT NULL,
+      raw_releases       TEXT NOT NULL,
+      discogs_master_url TEXT,
+      discogs_checked    INTEGER NOT NULL DEFAULT 0,
+      fetched_at         INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS scan_history (
       id                  TEXT PRIMARY KEY,
       created_at          INTEGER NOT NULL,

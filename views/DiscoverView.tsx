@@ -11,6 +11,7 @@ import {
   FilterState,
   formatBucketsForGroup,
   loadStoredFilterState,
+  pickRepresentativeRelease,
   sortFormatBuckets,
   sortTypeBuckets,
   typeBucketForGroup,
@@ -683,6 +684,24 @@ export function DiscoverView() {
     }
   };
 
+  // Mainstream path: add a sensible pressing straight from the collapsed
+  // card, no need to expand and pick a specific region first. Fetches
+  // on-demand (only when actually clicked, unlike the old eager
+  // auto-expand-everything approach) and reuses whatever's already cached.
+  const handleQuickAdd = async (group: SearchResultGroup) => {
+    try {
+      const detail = await loadReleasesForGroup(group.releaseGroupId);
+      const releases = detail?.releases ?? groupReleases[group.releaseGroupId]?.releases ?? [];
+      if (releases.length === 0) {
+        toast.error(`Couldn't load releases for "${group.title}". Please try again.`);
+        return;
+      }
+      await handleAddToCollection(pickRepresentativeRelease(releases));
+    } catch {
+      toast.error(`Couldn't load releases for "${group.title}". Please try again.`);
+    }
+  };
+
   return (
     <div className="p-4 md:p-8 pb-28 md:pb-24">
       <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-5 md:mb-6">Discover</h2>
@@ -869,6 +888,7 @@ export function DiscoverView() {
           onToggleGroup={(group) => {
             void toggleGroupExpanded(group);
           }}
+          onQuickAdd={handleQuickAdd}
           getVisibleReleases={getFilteredReleases}
           showFormatBuckets
           isGroupOwned={isGroupOwned}
