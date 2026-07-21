@@ -26,8 +26,20 @@ const DEFAULT_COLLECTION_CARD_SIZE = 240;
 // below so the affordance never disappears before the action it undoes.
 const REMOVE_UNDO_WINDOW_MS = 5000;
 
-function clampCollectionCardSize(value: number): number {
-  return Math.max(COLLECTION_CARD_SIZE_MIN, Math.min(COLLECTION_CARD_SIZE_MAX, value));
+// Pixels aren't a mental model users reach for — a discrete S/M/L choice
+// covers the real need (ux-improvement-plan.md §3.7). Bounds match the old
+// slider's min/mid/max so existing localStorage values still land sensibly.
+const COLLECTION_CARD_SIZE_PRESETS = [
+  { label: 'S', size: COLLECTION_CARD_SIZE_MIN },
+  { label: 'M', size: DEFAULT_COLLECTION_CARD_SIZE },
+  { label: 'L', size: COLLECTION_CARD_SIZE_MAX },
+] as const;
+
+function snapToNearestPreset(value: number): number {
+  return COLLECTION_CARD_SIZE_PRESETS.reduce(
+    (closest, preset) => (Math.abs(preset.size - value) < Math.abs(closest - value) ? preset.size : closest),
+    COLLECTION_CARD_SIZE_PRESETS[0].size,
+  );
 }
 
 function loadStoredCollectionCardSize(): number {
@@ -40,7 +52,9 @@ function loadStoredCollectionCardSize(): number {
     if (!raw) return DEFAULT_COLLECTION_CARD_SIZE;
     const parsed = Number.parseInt(raw, 10);
     if (Number.isNaN(parsed)) return DEFAULT_COLLECTION_CARD_SIZE;
-    return clampCollectionCardSize(parsed);
+    // Old slider could persist any 10px step; snap it onto the nearest
+    // preset so a leftover value from before this change still picks something.
+    return snapToNearestPreset(parsed);
   } catch {
     return DEFAULT_COLLECTION_CARD_SIZE;
   }
@@ -195,18 +209,26 @@ export function CollectionView() {
               <span className="hidden sm:inline">Clear collection</span>
             </button>
           )}
-          <div className="hidden md:flex items-center gap-3 px-3.5 py-2 rounded-full border border-white/10 bg-white/5">
-            <span className="text-[11px] uppercase tracking-wider text-gray-500">Size</span>
-            <input
-              type="range"
-              min={COLLECTION_CARD_SIZE_MIN}
-              max={COLLECTION_CARD_SIZE_MAX}
-              step={10}
-              value={collectionCardSize}
-              onChange={(e) => setCollectionCardSize(clampCollectionCardSize(Number(e.target.value)))}
-              className="w-28 accent-vinyl-accent"
-              aria-label="Collection card size"
-            />
+          <div
+            role="group"
+            aria-label="Collection card size"
+            className="hidden md:flex items-center gap-1 px-1.5 py-1 rounded-full border border-white/10 bg-white/5"
+          >
+            {COLLECTION_CARD_SIZE_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => setCollectionCardSize(preset.size)}
+                aria-pressed={collectionCardSize === preset.size}
+                className={`w-7 h-7 rounded-full text-xs font-semibold transition-colors ${
+                  collectionCardSize === preset.size
+                    ? 'bg-vinyl-accent/20 text-vinyl-accent'
+                    : 'text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
