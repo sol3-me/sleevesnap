@@ -443,6 +443,29 @@ export function DiscoverView() {
     [],
   );
 
+  // Single-release groups gain nothing from the extra click — expand them as
+  // soon as they appear, silently so it doesn't flash a loading state.
+  useEffect(() => {
+    const singles = searchPage.groups.filter((group) => group.totalReleases === 1);
+    if (singles.length === 0) return;
+
+    setExpandedGroups((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const group of singles) {
+        if (!next[group.releaseGroupId]) {
+          next[group.releaseGroupId] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+
+    for (const group of singles) {
+      void loadReleasesForGroup(group.releaseGroupId, true);
+    }
+  }, [searchPage.groups, loadReleasesForGroup]);
+
   const isFormatBucketChecked = useCallback(
     (bucket: string) => formatFilters[bucket] ?? true,
     [formatFilters],
