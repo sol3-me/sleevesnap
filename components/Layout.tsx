@@ -53,6 +53,14 @@ function AccountSection() {
             <p className="text-[11px] text-gray-500 truncate">{secondaryLine}</p>
           )}
         </div>
+        <Link
+          to="/settings"
+          title="Settings"
+          aria-label="Settings"
+          className="shrink-0 p-1.5 rounded-lg text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
+        >
+          <Icons.Settings />
+        </Link>
         <button
           type="button"
           onClick={() => void signOut()}
@@ -224,6 +232,14 @@ export function RootLayout() {
             >
               powered by musicbrainz <span aria-label="heart">❤</span>
             </a>
+            <Link
+              to="/settings"
+              title="Settings"
+              aria-label="Settings"
+              className="shrink-0 p-1.5 rounded-lg text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              <Icons.Settings />
+            </Link>
             <MobileSignOutButton />
           </header>
 

@@ -6,6 +6,7 @@ import { CollectionView } from './views/CollectionView';
 import { DiscoverView } from './views/DiscoverView';
 import { LabelDetailView } from './views/LabelDetailView';
 import { ScanView } from './views/ScanView';
+import { SettingsView } from './views/SettingsView';
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -87,7 +88,20 @@ const labelDetailRoute = createRoute({
   }),
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, discoverRoute, scanRoute, artistDetailRoute, labelDetailRoute]);
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsView,
+});
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  discoverRoute,
+  scanRoute,
+  artistDetailRoute,
+  labelDetailRoute,
+  settingsRoute,
+]);
 
 export const router = createRouter({ routeTree });
 

@@ -24,3 +24,7 @@ export const addRecord = async (record: VinylRecord): Promise<boolean> => {
 export const removeRecord = async (id: string): Promise<void> => {
   await apiFetch(`/api/collection/${encodeURIComponent(id)}`, { method: 'DELETE' });
 };
+
+export const clearCollection = async (): Promise<void> => {
+  await apiFetch('/api/collection', { method: 'DELETE' });
+};
