@@ -262,6 +262,42 @@ test('GET group releases omits discogs master when only non-master discogs relat
     }
 });
 
+// Regression test: a persistent MusicBrainz failure (e.g. 503 rate-limit)
+// must not be swallowed into a false-success empty release list — that gets
+// cached client-side for hours, making a real 29-release album look like it
+// has zero releases. It must surface as a 502 so the client's existing
+// "don't cache failed responses" logic actually kicks in.
+test('GET group releases returns 502 (not a false-success empty list) when MusicBrainz keeps failing', async () => {
+    globalThis.fetch = (async (input) => {
+        const target =
+            typeof input === 'string'
+                ? input
+                : input instanceof URL
+                    ? input.toString()
+                    : input.url;
+        const url = new URL(target);
+
+        if (url.pathname === '/ws/2/release') {
+            return jsonResponse({ error: 'rate limited' }, 503);
+        }
+
+        if (url.pathname.startsWith('/ws/2/release-group/')) {
+            return jsonResponse({ relations: [] });
+        }
+
+        return jsonResponse({ error: 'not found' }, 404);
+    }) as typeof fetch;
+
+    const { server, port } = await startTestServer();
+
+    try {
+        const res = await requestJson(port, '/api/search/groups/rate-limited-group/releases');
+        assert.equal(res.statusCode, 502, 'a persistent MusicBrainz failure must not look like a successful empty result');
+    } finally {
+        await closeServer(server);
+    }
+});
+
 test('POST /api/search asks MusicBrainz for media and defaults to vinyl-only filtering', async () => {
     globalThis.fetch = (async (input) => {
         const target =
