@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactElement, ReactNode, useEffect, useState } from 'react';
 import { groupReleasesByFormatAndYear, groupReleasesByFormatBucket } from '../lib/filters';
 import { SearchGroupReleases, SearchRelease, SearchResultGroup } from '../types';
 import { Icons } from './Icons';
@@ -50,6 +50,17 @@ function formatCountry(countryCode?: string) {
     }
 
     return countryCode;
+}
+
+/** Icon for a format bucket/string — returns undefined (no icon) for anything unrecognised. */
+function getFormatIcon(format: string): (() => ReactElement) | undefined {
+    const normalized = format.toLowerCase();
+    if (normalized.includes('vinyl') || normalized === 'lp') return Icons.FormatVinyl;
+    if (normalized.includes('cd')) return Icons.FormatCD;
+    if (normalized.includes('cassette') || normalized.includes('tape')) return Icons.FormatCassette;
+    if (normalized.includes('digital')) return Icons.FormatDigital;
+    if (normalized.includes('dvd') || normalized.includes('blu-ray') || normalized.includes('video')) return Icons.FormatVideo;
+    return undefined;
 }
 
 export function ReleaseGroupResultsList({
@@ -259,6 +270,13 @@ export function ReleaseGroupResultsList({
                 const isExpanded = Boolean(expandedGroups[group.releaseGroupId]);
                 const loadingGroup = Boolean(loadingGroupIds[group.releaseGroupId]);
                 const releaseCount = group.totalReleases;
+                // Once releases have actually been fetched (expanded or
+                // quick-added), swap the raw MusicBrainz count for the
+                // grouped edition count — otherwise "35 releases" reads as a
+                // promise that expanding shows 35 rows, when regional
+                // duplicates now collapse into far fewer. Falls back to the
+                // raw count beforehand, since computing this needs the data.
+                const groupedEditionCount = details ? groupReleasesByFormatAndYear(releases).length : undefined;
                 const canExpand = !showReleaseCount || releaseCount !== 1;
                 const discogsSearchUrl = `https://www.discogs.com/search/?q=${encodeURIComponent(
                     `${group.artist} ${group.title}`,
@@ -337,7 +355,11 @@ export function ReleaseGroupResultsList({
                                     <p className="text-xs text-gray-500 mt-1.5 truncate">
                                         {[
                                             group.firstReleaseDate?.slice(0, 4),
-                                            showReleaseCount ? `${releaseCount} release${releaseCount === 1 ? '' : 's'}` : undefined,
+                                            showReleaseCount
+                                                ? groupedEditionCount !== undefined
+                                                    ? `${groupedEditionCount} edition${groupedEditionCount === 1 ? '' : 's'}`
+                                                    : `${releaseCount} release${releaseCount === 1 ? '' : 's'}`
+                                                : undefined,
                                             group.availableFormats.length > 0 ? group.availableFormats.join(', ') : undefined,
                                         ]
                                             .filter(Boolean)
@@ -424,10 +446,13 @@ export function ReleaseGroupResultsList({
                                     </div>
                                 )}
 
-                                {groupedReleases.map(({ bucket, releases: bucketReleases }) => (
+                                {groupedReleases.map(({ bucket, releases: bucketReleases }) => {
+                                    const FormatIcon = bucket ? getFormatIcon(bucket) : undefined;
+                                    return (
                                     <div key={bucket || 'all-releases'}>
                                         {showFormatBuckets && bucket && (
-                                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2 mt-3 first:mt-0">
+                                            <h5 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400 pt-4 mt-4 mb-2.5 border-t border-white/5 first:pt-0 first:mt-0 first:border-t-0">
+                                                {FormatIcon && <FormatIcon />}
                                                 {bucket}
                                             </h5>
                                         )}
@@ -467,7 +492,8 @@ export function ReleaseGroupResultsList({
                                             })}
                                         </div>
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
