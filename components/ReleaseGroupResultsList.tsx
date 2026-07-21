@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { groupReleasesByFormatBucket } from '../lib/filters';
+import { ReactNode, useEffect, useState } from 'react';
+import { groupReleasesByFormatAndYear, groupReleasesByFormatBucket } from '../lib/filters';
 import { SearchGroupReleases, SearchRelease, SearchResultGroup } from '../types';
 import { Icons } from './Icons';
 
@@ -73,9 +73,14 @@ export function ReleaseGroupResultsList({
     onLabelNameClick,
 }: ReleaseGroupResultsListProps) {
     const [failedCovers, setFailedCovers] = useState<Record<string, true>>({});
+    // Which format+year variant groups have their region list expanded —
+    // collapsed by default so a dozen near-identical country pressings don't
+    // spam the list; power users opt into seeing them via this toggle.
+    const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         setFailedCovers({});
+        setExpandedVariants({});
     }, [groups]);
 
     const getCoverFailureKey = (recordId: string, coverUrl: string) => `${recordId}::${coverUrl}`;
@@ -115,6 +120,122 @@ export function ReleaseGroupResultsList({
             <div className="w-full h-full bg-vinyl-700 text-gray-300 flex flex-col items-center justify-center text-[10px] leading-tight">
                 <span className="text-lg" aria-hidden="true">♪</span>
                 <span>{placeholderText}</span>
+            </div>
+        );
+    };
+
+    const renderActionButton = (record: SearchRelease, compactButton: boolean) => {
+        const disabled = isReleaseActionDisabled?.(record) ?? false;
+        const actionLabel = getReleaseActionLabel?.(record, disabled) ?? (disabled ? 'Unavailable' : 'Select');
+        const defaultClassName = disabled
+            ? 'text-xs font-semibold bg-white/5 border border-white/10 text-gray-500 px-3.5 py-1.5 rounded-full cursor-default'
+            : 'text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-1.5 rounded-full transition-colors';
+        const actionClassName = `${getReleaseActionClassName?.(record, disabled) ?? defaultClassName} ${compactButton ? 'self-center shrink-0' : 'self-end'}`;
+
+        return (
+            <button onClick={() => !disabled && onReleaseAction(record)} disabled={disabled} className={actionClassName}>
+                {actionLabel}
+            </button>
+        );
+    };
+
+    // The full card: cover, title, artist, metadata, MBID link, action button.
+    // Used both for a variant group's representative pressing and for the
+    // single-release case (a group with no other regions to collapse).
+    const renderReleaseCard = (record: SearchRelease, groupThumbnailUrl: SearchResultGroup['thumbnailUrl'], extraContent?: ReactNode) => {
+        const country = formatCountry(record.country);
+
+        return (
+            <div className={`flex ${compact ? 'bg-vinyl-950/70 rounded-lg p-2.5' : 'bg-vinyl-900/70 rounded-xl p-3'} border border-white/5 gap-3`}>
+                <div className={`${compact ? 'w-11 h-11 rounded-md' : 'w-20 h-20 rounded-lg'} overflow-hidden border border-white/10 shrink-0`}>
+                    {renderCoverThumb(record.id, record.title, [record.coverUrl, groupThumbnailUrl], 'No art')}
+                </div>
+                <div className="min-w-0 flex-1 flex flex-col justify-between">
+                    <div>
+                        <h4 className={`${compact ? 'text-sm' : 'text-base'} font-bold text-white truncate`}>{record.title}</h4>
+                        <p className={`${compact ? 'text-xs' : 'text-sm'} text-gray-400 truncate`}>
+                            {onArtistNameClick ? (
+                                <button
+                                    type="button"
+                                    className="hover:text-white underline underline-offset-2 transition-colors"
+                                    onClick={() => {
+                                        void onArtistNameClick(record.artist);
+                                    }}
+                                >
+                                    {record.artist}
+                                </button>
+                            ) : (
+                                record.artist
+                            )}
+                        </p>
+                        {labelContext?.name && (
+                            <p className="text-xs text-gray-500 truncate">
+                                Label:{' '}
+                                {onLabelNameClick ? (
+                                    <button
+                                        type="button"
+                                        className="hover:text-white underline underline-offset-2 transition-colors"
+                                        onClick={() => {
+                                            void onLabelNameClick(labelContext.name, labelContext.id);
+                                        }}
+                                    >
+                                        {labelContext.name}
+                                    </button>
+                                ) : (
+                                    labelContext.name
+                                )}
+                            </p>
+                        )}
+                        <p className="text-xs text-gray-500 mt-1 truncate">
+                            {[record.year, country, record.format, record.releaseStatus, record.genre]
+                                .filter(Boolean)
+                                .join(' • ') || 'Metadata unavailable'}
+                        </p>
+                        {record.musicBrainzId && (
+                            <p className="text-xs text-gray-500 truncate">
+                                {record.edition ? `${record.edition} • ` : ''}
+                                <a
+                                    href={record.releaseUrl ?? `https://musicbrainz.org/release/${record.musicBrainzId}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-vinyl-accent hover:text-white underline"
+                                >
+                                    MBID {record.musicBrainzId.slice(0, 8)}
+                                </a>
+                            </p>
+                        )}
+                        {extraContent}
+                    </div>
+                    {renderActionButton(record, false)}
+                </div>
+            </div>
+        );
+    };
+
+    // A single region's row inside an expanded variant group — country,
+    // status/edition, and MBID, no repeated cover thumbnail (the whole point
+    // of collapsing is to stop repeating near-identical visual weight).
+    const renderRegionRow = (record: SearchRelease) => {
+        const country = formatCountry(record.country) ?? 'Unknown region';
+
+        return (
+            <div className={`flex items-center justify-between gap-3 ${compact ? 'bg-vinyl-950/50 p-2' : 'bg-vinyl-950/50 p-2.5'} rounded-lg border border-white/5`}>
+                <div className="min-w-0 flex-1">
+                    <p className="text-xs text-gray-300 truncate">
+                        {[country, record.releaseStatus, record.edition].filter(Boolean).join(' • ')}
+                    </p>
+                    {record.musicBrainzId && (
+                        <a
+                            href={record.releaseUrl ?? `https://musicbrainz.org/release/${record.musicBrainzId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] text-vinyl-accent hover:text-white underline"
+                        >
+                            MBID {record.musicBrainzId.slice(0, 8)}
+                        </a>
+                    )}
+                </div>
+                {renderActionButton(record, true)}
             </div>
         );
     };
@@ -280,83 +401,36 @@ export function ReleaseGroupResultsList({
                                             </h5>
                                         )}
                                         <div className="space-y-3">
-                                            {bucketReleases.map((record) => {
-                                                const country = formatCountry(record.country);
-                                                const disabled = isReleaseActionDisabled?.(record) ?? false;
-                                                const actionLabel = getReleaseActionLabel?.(record, disabled) ?? (disabled ? 'Unavailable' : 'Select');
-                                                const actionClassName = getReleaseActionClassName?.(record, disabled)
-                                                    ?? (disabled
-                                                        ? 'self-end text-xs font-semibold bg-white/5 border border-white/10 text-gray-500 px-3.5 py-1.5 rounded-full cursor-default'
-                                                        : 'self-end text-xs font-semibold bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white px-3.5 py-1.5 rounded-full transition-colors');
+                                            {groupReleasesByFormatAndYear(bucketReleases).map((variant) => {
+                                                const variantKey = `${group.releaseGroupId}::${bucket}::${variant.format}::${variant.year}`;
+                                                const hasMultipleRegions = variant.releases.length > 1;
+                                                const isVariantExpanded = Boolean(expandedVariants[variantKey]);
+
+                                                const regionToggle = hasMultipleRegions ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            setExpandedVariants((prev) => ({ ...prev, [variantKey]: !prev[variantKey] }))
+                                                        }
+                                                        className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-vinyl-accent hover:text-white transition-colors"
+                                                    >
+                                                        {isVariantExpanded ? 'Hide' : 'Show'} all {variant.releases.length} regions
+                                                        <span className={`transition-transform duration-200 ${isVariantExpanded ? 'rotate-180' : ''}`}>
+                                                            <Icons.ChevronDown />
+                                                        </span>
+                                                    </button>
+                                                ) : undefined;
 
                                                 return (
-                                                    <div key={record.id} className={`flex ${compact ? 'bg-vinyl-950/70 rounded-lg p-2.5' : 'bg-vinyl-900/70 rounded-xl p-3'} border border-white/5 gap-3`}>
-                                                        <div className={`${compact ? 'w-11 h-11 rounded-md' : 'w-20 h-20 rounded-lg'} overflow-hidden border border-white/10 shrink-0`}>
-                                                            {renderCoverThumb(record.id, record.title, [record.coverUrl, group.thumbnailUrl], 'No art')}
-                                                        </div>
-                                                        <div className="min-w-0 flex-1 flex flex-col justify-between">
-                                                            <div>
-                                                                <h4 className={`${compact ? 'text-sm' : 'text-base'} font-bold text-white truncate`}>{record.title}</h4>
-                                                                <p className={`${compact ? 'text-xs' : 'text-sm'} text-gray-400 truncate`}>
-                                                                    {onArtistNameClick ? (
-                                                                        <button
-                                                                            type="button"
-                                                                            className="hover:text-white underline underline-offset-2 transition-colors"
-                                                                            onClick={() => {
-                                                                                void onArtistNameClick(record.artist);
-                                                                            }}
-                                                                        >
-                                                                            {record.artist}
-                                                                        </button>
-                                                                    ) : (
-                                                                        record.artist
-                                                                    )}
-                                                                </p>
-                                                                {labelContext?.name && (
-                                                                    <p className="text-xs text-gray-500 truncate">
-                                                                        Label:{' '}
-                                                                        {onLabelNameClick ? (
-                                                                            <button
-                                                                                type="button"
-                                                                                className="hover:text-white underline underline-offset-2 transition-colors"
-                                                                                onClick={() => {
-                                                                                    void onLabelNameClick(labelContext.name, labelContext.id);
-                                                                                }}
-                                                                            >
-                                                                                {labelContext.name}
-                                                                            </button>
-                                                                        ) : (
-                                                                            labelContext.name
-                                                                        )}
-                                                                    </p>
-                                                                )}
-                                                                <p className="text-xs text-gray-500 mt-1 truncate">
-                                                                    {[record.year, country, record.format, record.releaseStatus, record.genre]
-                                                                        .filter(Boolean)
-                                                                        .join(' • ') || 'Metadata unavailable'}
-                                                                </p>
-                                                                {record.musicBrainzId && (
-                                                                    <p className="text-xs text-gray-500 truncate">
-                                                                        {record.edition ? `${record.edition} • ` : ''}
-                                                                        <a
-                                                                            href={record.releaseUrl ?? `https://musicbrainz.org/release/${record.musicBrainzId}`}
-                                                                            target="_blank"
-                                                                            rel="noreferrer"
-                                                                            className="text-vinyl-accent hover:text-white underline"
-                                                                        >
-                                                                            MBID {record.musicBrainzId.slice(0, 8)}
-                                                                        </a>
-                                                                    </p>
-                                                                )}
+                                                    <div key={variantKey}>
+                                                        {renderReleaseCard(variant.representative, group.thumbnailUrl, regionToggle)}
+                                                        {hasMultipleRegions && isVariantExpanded && (
+                                                            <div className="mt-2 ml-4 pl-3 border-l-2 border-white/10 space-y-2">
+                                                                {variant.releases.map((record) => (
+                                                                    <div key={record.id}>{renderRegionRow(record)}</div>
+                                                                ))}
                                                             </div>
-                                                            <button
-                                                                onClick={() => !disabled && onReleaseAction(record)}
-                                                                disabled={disabled}
-                                                                className={actionClassName}
-                                                            >
-                                                                {actionLabel}
-                                                            </button>
-                                                        </div>
+                                                        )}
                                                     </div>
                                                 );
                                             })}
