@@ -180,6 +180,14 @@ collectionRouter.post('/', (req, res) => {
   res.status(201).json({ success: true });
 });
 
+// DELETE /api/collection – clear the entire collection for this user
+collectionRouter.delete('/', (req, res) => {
+  const uid = requireUid(req, res);
+  if (!uid) return;
+  db.prepare('DELETE FROM collection WHERE user_id = ?').run(uid);
+  res.json({ success: true });
+});
+
 // DELETE /api/collection/:id
 collectionRouter.delete('/:id', (req, res) => {
   const uid = requireUid(req, res);

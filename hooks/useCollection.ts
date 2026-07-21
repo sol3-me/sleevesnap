@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { addRecord, getCollection, removeRecord } from '../services/storageService';
+import { addRecord, clearCollection, getCollection, removeRecord } from '../services/storageService';
 import { VinylRecord } from '../types';
 
 export const collectionQueryKey = ['collection'] as const;
@@ -30,6 +30,16 @@ export function useRemoveFromCollectionMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => removeRecord(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: collectionQueryKey });
+    },
+  });
+}
+
+export function useClearCollectionMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => clearCollection(),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: collectionQueryKey });
     },
