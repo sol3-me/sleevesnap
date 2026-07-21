@@ -4,6 +4,7 @@ import {
   bucketForFormat,
   formatBucketsForGroup,
   groupReleasesByFormatBucket,
+  groupReleasesByFormatAndYear,
   loadStoredFilterState,
   sortBucketsWithPriority,
   sortFormatBuckets,
@@ -102,6 +103,100 @@ test('groupReleasesByFormatBucket groups by bucket while preserving each release
 test('groupReleasesByFormatBucket buckets releases with no format under "Unknown"', () => {
   const grouped = groupReleasesByFormatBucket<{ id: string; format?: string }>([{ id: '1' }]);
   assert.deepEqual(grouped, [{ bucket: 'Unknown', releases: [{ id: '1' }] }]);
+});
+
+// --- groupReleasesByFormatAndYear -------------------------------------------
+// Collapses near-duplicate regional pressings (same format, same year, only
+// the country/label/edition differ) into one variant group, so a popular
+// album's expanded release list isn't 15 near-identical country variants.
+
+interface TestRelease {
+  id: string;
+  format?: string;
+  year?: string;
+  country?: string;
+  releaseDate?: string;
+}
+
+test('groupReleasesByFormatAndYear collapses releases sharing the exact format + year', () => {
+  const releases: TestRelease[] = [
+    { id: 'us', format: 'CD', year: '1988', country: 'US' },
+    { id: 'gb', format: 'CD', year: '1988', country: 'GB' },
+    { id: 'de', format: 'CD', year: '1988', country: 'DE' },
+  ];
+  const grouped = groupReleasesByFormatAndYear(releases);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].releases.length, 3);
+});
+
+test('groupReleasesByFormatAndYear keeps different exact formats separate even in the same coarse bucket', () => {
+  // "12\" Vinyl" and "7\" Vinyl" both bucket to "Vinyl" for the filter dropdown,
+  // but they're physically different releases and must not collapse together.
+  const releases: TestRelease[] = [
+    { id: 'a', format: '12" Vinyl', year: '1988', country: 'US' },
+    { id: 'b', format: '7" Vinyl', year: '1988', country: 'US' },
+  ];
+  const grouped = groupReleasesByFormatAndYear(releases);
+  assert.equal(grouped.length, 2);
+});
+
+test('groupReleasesByFormatAndYear keeps the same format separate across different years', () => {
+  const releases: TestRelease[] = [
+    { id: 'a', format: 'CD', year: '1988', country: 'US' },
+    { id: 'b', format: 'CD', year: '2011', country: 'US' },
+  ];
+  const grouped = groupReleasesByFormatAndYear(releases);
+  assert.equal(grouped.length, 2);
+});
+
+test('groupReleasesByFormatAndYear picks the Worldwide (XW) release as representative regardless of list order', () => {
+  const releases: TestRelease[] = [
+    { id: 'us', format: 'CD', year: '2005', country: 'US' },
+    { id: 'xw', format: 'CD', year: '2005', country: 'XW' },
+    { id: 'gb', format: 'CD', year: '2005', country: 'GB' },
+  ];
+  const [group] = groupReleasesByFormatAndYear(releases);
+  assert.equal(group.representative.id, 'xw');
+});
+
+test('groupReleasesByFormatAndYear falls back to the earliest releaseDate when there is no Worldwide release', () => {
+  const releases: TestRelease[] = [
+    { id: 'later', format: 'CD', year: '2005', country: 'US', releaseDate: '2005-06-01' },
+    { id: 'earliest', format: 'CD', year: '2005', country: 'GB', releaseDate: '2005-01-15' },
+  ];
+  const [group] = groupReleasesByFormatAndYear(releases);
+  assert.equal(group.representative.id, 'earliest');
+});
+
+test('groupReleasesByFormatAndYear falls back to first-in-list order when nothing else differentiates', () => {
+  const releases: TestRelease[] = [
+    { id: 'first', format: 'CD', year: '2005', country: 'US' },
+    { id: 'second', format: 'CD', year: '2005', country: 'GB' },
+  ];
+  const [group] = groupReleasesByFormatAndYear(releases);
+  assert.equal(group.representative.id, 'first');
+});
+
+test('groupReleasesByFormatAndYear buckets releases missing format/year under "Unknown"', () => {
+  const releases: TestRelease[] = [{ id: 'a' }, { id: 'b' }];
+  const grouped = groupReleasesByFormatAndYear(releases);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].format, 'Unknown');
+  assert.equal(grouped[0].year, 'Unknown');
+  assert.equal(grouped[0].releases.length, 2);
+});
+
+test('groupReleasesByFormatAndYear preserves first-appearance order of variant groups', () => {
+  const releases: TestRelease[] = [
+    { id: 'a', format: 'CD', year: '2011', country: 'US' },
+    { id: 'b', format: 'CD', year: '1988', country: 'US' },
+    { id: 'c', format: 'CD', year: '2011', country: 'GB' },
+  ];
+  const grouped = groupReleasesByFormatAndYear(releases);
+  assert.deepEqual(
+    grouped.map((g) => g.year),
+    ['2011', '1988'],
+  );
 });
 
 test('loadStoredFilterState returns {} when window is undefined (SSR/test guard)', () => {
