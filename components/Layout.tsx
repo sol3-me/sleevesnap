@@ -1,8 +1,22 @@
 import { Link, Outlet, useLocation } from '@tanstack/react-router';
+import type { User } from 'firebase/auth';
+import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { ScanProvider } from '../contexts/ScanContext';
 import { Icons } from './Icons';
+
+const providerLabels: Record<string, string> = {
+  'google.com': 'Google',
+  'github.com': 'GitHub',
+  password: 'Email',
+};
+
+/** Friendly label for the sign-in method behind this account, e.g. "Google". */
+function getProviderLabel(user: User): string | null {
+  const providerId = user.providerData[0]?.providerId;
+  return providerId ? providerLabels[providerId] ?? null : null;
+}
 
 /** Compact account row: avatar (or initial), name/email, sign-out. */
 function AccountSection() {
@@ -11,6 +25,12 @@ function AccountSection() {
 
   const label = user.displayName ?? user.email ?? 'Signed in';
   const initial = label.charAt(0).toUpperCase();
+  const providerLabel = getProviderLabel(user);
+  // Primary line already shows the email when there's no display name, so
+  // only repeat it here alongside the provider when a display name pushed it down.
+  const secondaryLine = user.displayName && user.email
+    ? providerLabel ? `${user.email} · ${providerLabel}` : user.email
+    : providerLabel;
 
   return (
     <div className="px-3 pb-3">
@@ -29,8 +49,8 @@ function AccountSection() {
         )}
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium text-white truncate">{label}</p>
-          {user.displayName && user.email && (
-            <p className="text-[11px] text-gray-500 truncate">{user.email}</p>
+          {secondaryLine && (
+            <p className="text-[11px] text-gray-500 truncate">{secondaryLine}</p>
           )}
         </div>
         <button
@@ -86,6 +106,48 @@ function MobileSignOutButton() {
   );
 }
 
+interface LatestRelease {
+  tag_name?: string;
+  html_url?: string;
+}
+
+/** Live release tag from GitHub Releases, falling back to the build-time version until one exists. */
+function VersionBadge() {
+  const [release, setRelease] = useState<LatestRelease | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('https://api.github.com/repos/sol3-me/sleevesnap/releases/latest', {
+      headers: { Accept: 'application/vnd.github+json' },
+    })
+      .then((res) => (res.ok ? (res.json() as Promise<LatestRelease>) : null))
+      .then((data) => {
+        if (!cancelled && data?.tag_name) setRelease(data);
+      })
+      .catch(() => {
+        // Keep the build-time fallback if the request fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (release?.tag_name) {
+    return (
+      <a
+        href={release.html_url ?? 'https://github.com/sol3-me/sleevesnap/releases/latest'}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hover:text-gray-300 transition-colors"
+      >
+        {release.tag_name}
+      </a>
+    );
+  }
+
+  return <span>v{__APP_VERSION__}</span>;
+}
+
 /** The brand mark: a tiny vinyl record next to the wordmark. */
 function Logo() {
   return (
@@ -125,14 +187,27 @@ export function RootLayout() {
           </nav>
           <AccountSection />
           <div className={creditClassName}>
-            <a
-              href="https://musicbrainz.org"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-gray-300 transition-colors"
-            >
-              powered by musicbrainz <span aria-label="heart">❤</span>
-            </a>
+            <div>
+              <a
+                href="https://musicbrainz.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-gray-300 transition-colors"
+              >
+                powered by musicbrainz <span aria-label="heart">❤</span>
+              </a>
+            </div>
+            <div className="flex items-center justify-between gap-2 mt-1">
+              <a
+                href="https://github.com/sol3uk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-gray-300 transition-colors"
+              >
+                made by sol3uk
+              </a>
+              <VersionBadge />
+            </div>
           </div>
         </aside>
 
