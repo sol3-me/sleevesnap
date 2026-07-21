@@ -9,6 +9,8 @@ interface ReleaseGroupResultsListProps {
     expandedGroups: Record<string, boolean>;
     loadingGroupIds: Record<string, true>;
     onToggleGroup: (group: SearchResultGroup) => void | Promise<void>;
+    /** Adds a sensible representative pressing directly, with no need to expand first. Omit to hide the quick-add button. */
+    onQuickAdd?: (group: SearchResultGroup) => void | Promise<void>;
     onReleaseAction: (record: SearchRelease) => void;
     isReleaseActionDisabled?: (record: SearchRelease) => boolean;
     getReleaseActionLabel?: (record: SearchRelease, disabled: boolean) => string;
@@ -56,6 +58,7 @@ export function ReleaseGroupResultsList({
     expandedGroups,
     loadingGroupIds,
     onToggleGroup,
+    onQuickAdd,
     onReleaseAction,
     isReleaseActionDisabled,
     getReleaseActionLabel,
@@ -77,6 +80,9 @@ export function ReleaseGroupResultsList({
     // collapsed by default so a dozen near-identical country pressings don't
     // spam the list; power users opt into seeing them via this toggle.
     const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
+    // Groups with a quick-add in flight — mainstream users can add straight
+    // from the collapsed card with no need to expand first.
+    const [quickAddingGroupIds, setQuickAddingGroupIds] = useState<Record<string, true>>({});
 
     useEffect(() => {
         setFailedCovers({});
@@ -362,7 +368,32 @@ export function ReleaseGroupResultsList({
                                 </div>
                             </div>
 
-                            <div className="sm:self-center shrink-0">
+                            <div className="sm:self-center shrink-0 flex flex-col sm:items-end gap-2">
+                                {onQuickAdd && (() => {
+                                    const isQuickAdding = Boolean(quickAddingGroupIds[group.releaseGroupId]);
+                                    return (
+                                        <button
+                                            type="button"
+                                            disabled={isQuickAdding}
+                                            onClick={async (e) => {
+                                                e.stopPropagation();
+                                                setQuickAddingGroupIds((prev) => ({ ...prev, [group.releaseGroupId]: true }));
+                                                try {
+                                                    await onQuickAdd(group);
+                                                } finally {
+                                                    setQuickAddingGroupIds((prev) => {
+                                                        const next = { ...prev };
+                                                        delete next[group.releaseGroupId];
+                                                        return next;
+                                                    });
+                                                }
+                                            }}
+                                            className={`w-full sm:w-auto ${compact ? 'sm:min-w-[130px]' : 'sm:min-w-[150px]'} px-4 py-2 rounded-full bg-gradient-to-br from-vinyl-accent to-red-500 hover:from-vinyl-accent-soft hover:to-red-400 text-white text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-60`}
+                                        >
+                                            {isQuickAdding ? 'Adding...' : 'Add to Collection'}
+                                        </button>
+                                    );
+                                })()}
                                 <button
                                     type="button"
                                     aria-expanded={isExpanded}

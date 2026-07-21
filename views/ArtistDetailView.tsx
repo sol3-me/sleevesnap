@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { useAddToCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
 import { resolveArtistEntityByName } from '../lib/entityResolvers';
+import { pickRepresentativeRelease } from '../lib/filters';
 import { getReleaseGroupReleases, searchVinylReleaseGroups } from '../services/vinylService';
 import { SearchGroupReleases, SearchResultGroup, SearchResultPage, VinylRecord } from '../types';
 
@@ -338,6 +339,22 @@ export function ArtistDetailView() {
     }
   };
 
+  // Mainstream path: add a sensible pressing straight from the collapsed
+  // card, no need to expand and pick a specific region first.
+  const handleQuickAdd = async (group: SearchResultGroup) => {
+    try {
+      const detail = await loadReleasesForGroup(group.releaseGroupId);
+      const releases = detail?.releases ?? groupReleases[group.releaseGroupId]?.releases ?? [];
+      if (releases.length === 0) {
+        toast.error(`Couldn't load releases for "${group.title}". Please try again.`);
+        return;
+      }
+      await handleAddToCollection(pickRepresentativeRelease(releases));
+    } catch {
+      toast.error(`Couldn't load releases for "${group.title}". Please try again.`);
+    }
+  };
+
   const collectionMbids = useMemo(
     () => new Set(collection.map((r) => r.musicBrainzId).filter((id): id is string => Boolean(id))),
     [collection],
@@ -431,6 +448,7 @@ export function ArtistDetailView() {
             onToggleGroup={(group) => {
               void toggleGroupExpanded(group.releaseGroupId);
             }}
+            onQuickAdd={handleQuickAdd}
             isGroupOwned={(releaseGroupId) => collectionReleaseGroupIds.has(releaseGroupId)}
             isReleaseActionDisabled={isReleaseOwned}
             getReleaseActionLabel={(_, disabled) => (disabled ? 'In Collection' : 'Add to Collection')}

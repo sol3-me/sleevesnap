@@ -92,7 +92,9 @@ export interface ReleaseVariantGroup<T> {
 // pressing, so it's the best default when one exists.
 const WORLDWIDE_COUNTRY_CODE = 'XW';
 
-function pickRepresentativeRelease<T extends { country?: string; releaseDate?: string }>(releases: T[]): T {
+// Exported so quick-add (picking one release for the whole group, not just
+// within a single format+year variant) can reuse the same priority.
+export function pickRepresentativeRelease<T extends { country?: string; releaseDate?: string }>(releases: T[]): T {
   const worldwide = releases.find((release) => release.country === WORLDWIDE_COUNTRY_CODE);
   if (worldwide) return worldwide;
 
