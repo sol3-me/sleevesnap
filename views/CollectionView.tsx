@@ -2,15 +2,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, Link } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icons } from '../components/Icons';
 import { VinylCard } from '../components/VinylCard';
-import {
-  collectionQueryKey,
-  useClearCollectionMutation,
-  useCollectionQuery,
-  useRemoveFromCollectionMutation,
-} from '../hooks/useCollection';
+import { collectionQueryKey, useCollectionQuery, useRemoveFromCollectionMutation } from '../hooks/useCollection';
 import { useIsMobileLayout } from '../hooks/useIsMobileLayout';
 import { resolveArtistEntityByName } from '../lib/entityResolvers';
 import { VinylRecord } from '../types';
@@ -65,11 +59,9 @@ export function CollectionView() {
   const navigate = routeApi.useNavigate();
   const { data: collection } = useCollectionQuery();
   const removeMutation = useRemoveFromCollectionMutation();
-  const clearMutation = useClearCollectionMutation();
   const queryClient = useQueryClient();
   const isMobileLayout = useIsMobileLayout();
   const [collectionCardSize, setCollectionCardSize] = useState<number>(() => loadStoredCollectionCardSize());
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const highlightedCardRef = useRef<HTMLDivElement>(null);
   // Records the user has just removed but hasn't been sent to the server
   // yet, keyed by record id — gives the "Undo" toast action a window to
@@ -145,19 +137,6 @@ export function CollectionView() {
     });
   };
 
-  // Destroys every record in one go, so this gets a real confirm dialog
-  // rather than the per-item undo-toast pattern above — losing an undo
-  // window on your entire collection is a much bigger deal than on one card.
-  const handleClearCollection = async () => {
-    setShowClearConfirm(false);
-    try {
-      await clearMutation.mutateAsync();
-      toast.success('Collection cleared');
-    } catch {
-      toast.error('Failed to clear collection. Please try again.');
-    }
-  };
-
   const openArtistDetail = useCallback(async (artistName: string) => {
     const trimmed = artistName.trim();
     if (!trimmed) return;
@@ -198,49 +177,28 @@ export function CollectionView() {
             {collection.length} {collection.length === 1 ? 'record' : 'records'}
           </span>
         </div>
-        <div className="flex items-center gap-3">
-          {collection.length > 0 && (
+        <div
+          role="group"
+          aria-label="Collection card size"
+          className="hidden md:flex items-center gap-1 px-1.5 py-1 rounded-full border border-white/10 bg-white/5"
+        >
+          {COLLECTION_CARD_SIZE_PRESETS.map((preset) => (
             <button
+              key={preset.label}
               type="button"
-              onClick={() => setShowClearConfirm(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-full border border-white/10 bg-white/5 text-xs font-medium text-gray-400 hover:text-red-400 hover:border-red-400/30 transition-colors"
+              onClick={() => setCollectionCardSize(preset.size)}
+              aria-pressed={collectionCardSize === preset.size}
+              className={`w-7 h-7 rounded-full text-xs font-semibold transition-colors ${
+                collectionCardSize === preset.size
+                  ? 'bg-vinyl-accent/20 text-vinyl-accent'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
             >
-              <Icons.Trash />
-              <span className="hidden sm:inline">Clear collection</span>
+              {preset.label}
             </button>
-          )}
-          <div
-            role="group"
-            aria-label="Collection card size"
-            className="hidden md:flex items-center gap-1 px-1.5 py-1 rounded-full border border-white/10 bg-white/5"
-          >
-            {COLLECTION_CARD_SIZE_PRESETS.map((preset) => (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => setCollectionCardSize(preset.size)}
-                aria-pressed={collectionCardSize === preset.size}
-                className={`w-7 h-7 rounded-full text-xs font-semibold transition-colors ${
-                  collectionCardSize === preset.size
-                    ? 'bg-vinyl-accent/20 text-vinyl-accent'
-                    : 'text-gray-500 hover:text-gray-300'
-                }`}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
       </div>
-
-      <ConfirmDialog
-        open={showClearConfirm}
-        title="Clear entire collection?"
-        description={`This removes all ${collection.length} ${collection.length === 1 ? 'record' : 'records'} from your collection. This can't be undone.`}
-        confirmLabel="Clear collection"
-        onConfirm={() => void handleClearCollection()}
-        onCancel={() => setShowClearConfirm(false)}
-      />
 
       {collection.length === 0 ? (
         <div className="flex flex-col items-center text-center py-20 px-6 bg-vinyl-900/60 rounded-3xl border border-dashed border-white/10">
