@@ -47,6 +47,16 @@ npm run dev:server   # API on :3001 (terminal 1)
 npm run dev          # frontend on :3000, proxies /api and /covers (terminal 2)
 ```
 
+#### Firebase Auth Emulator (optional)
+
+By default, local dev talks to the real Firebase project — fine for most work, but signing in as a test account means creating one for real. To test sign-in flows (including a signup you can freely break) without touching production Auth:
+
+```bash
+npm run dev:emulators   # Auth emulator on :9099, Emulator UI on :4000 (its own terminal)
+```
+
+Then set `VITE_USE_FIREBASE_EMULATOR=true` and `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` in `.env` and restart `dev`/`dev:server`. Google and GitHub sign-in both fall back to a local fake account picker in emulator mode — no real OAuth credentials needed. User data persists across restarts in `.firebase-emulator-data/` (gitignored); delete that directory to start fresh.
+
 ### Production Build
 
 ```bash

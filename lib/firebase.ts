@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import { setApiTokenGetter } from './apiFetch';
 
 // All values here are public client identifiers, not secrets — Firebase web
@@ -23,6 +23,15 @@ if (missing.length > 0) {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const firebaseAuth = getAuth(firebaseApp);
+
+// Opt-in local dev against the Firebase Auth Emulator instead of the real
+// project (`npm run dev:emulators`, see README) — set
+// VITE_USE_FIREBASE_EMULATOR=true in .env. The import.meta.env.DEV check is
+// belt-and-suspenders: that flag is statically false in a production build,
+// so this can never fire there even if the env var leaked into one.
+if (import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true') {
+  connectAuthEmulator(firebaseAuth, 'http://127.0.0.1:9099');
+}
 
 // Every app API call attaches the current user's ID token; getIdToken()
 // serves a cached token and transparently refreshes it near expiry.
