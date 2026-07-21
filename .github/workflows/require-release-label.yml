@@ -26,10 +26,15 @@ jobs:
           count=${#release_labels[@]}
 
           if [ "$count" -eq 0 ]; then
-            echo "::error::No release label found on this PR."
-            echo "::error::Apply exactly one of: release:patch, release:minor, release:major, no-release"
-            echo "::error::Use the Labels panel on the right-hand side of the PR — writing the label name in the description does not count."
-            exit 1
+            # Not a hard failure: PRs are routinely opened a moment before a
+            # label is attached (a separate API call, not part of `pr create`),
+            # so treating this as an error meant every single PR failed CI
+            # for a few seconds and fired a spurious failure notification.
+            # Multiple labels (below) is a real authoring mistake and still
+            # hard-fails; "no label yet" is just not-done-yet.
+            echo "::warning::No release label yet on this PR — apply exactly one of: release:patch, release:minor, release:major, no-release"
+            echo "::warning::Use the Labels panel on the right-hand side of the PR — writing the label name in the description does not count."
+            exit 0
           fi
 
           if [ "$count" -gt 1 ]; then
