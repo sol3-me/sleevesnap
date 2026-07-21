@@ -1,3 +1,4 @@
+import { db } from '../../db.js';
 import { createRateLimiter } from './requestRateLimiter.js';
 
 const DEFAULT_GROUP_PAGE_SIZE = 10;
@@ -23,6 +24,13 @@ const RETRY_BASE_DELAY_MS = 1000;
 const rawMinRequestInterval = process.env.MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS;
 const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = rawMinRequestInterval !== undefined ? Number(rawMinRequestInterval) : 1100;
 const musicBrainzRateLimiter = createRateLimiter(MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS);
+
+// A release-group's release list rarely changes (new pressings appear
+// occasionally, not hourly) — a persistent, shared cache means only the
+// first request for a given group anywhere ever hits MusicBrainz, instead of
+// every search-result enrichment AND every later "show releases"/quick-add
+// paying the same cost independently.
+const RELEASE_GROUP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface MusicBrainzArtistCredit {
     name?: string;
@@ -301,12 +309,23 @@ export function createMusicBrainzCatalogGateway(appName: string): CatalogSearchG
         },
 
         async getReleaseGroupReleases(releaseGroupId) {
-            const [releases, discogsMasterUrl] = await Promise.all([
-                fetchReleasesByGroupId(releaseGroupId, appName),
-                fetchReleaseGroupDiscogsMasterUrl(releaseGroupId, appName),
-            ]);
-            const mapped = releases.map((release) => mapRelease(release, releaseGroupId));
-            const availableFormats = Array.from(new Set(mapped.map((release) => release.format ?? 'Unknown')));
+            // Releases and discogs-master are cached independently: search-time
+            // enrichment (enrichCandidate) only ever warms the releases half, so
+            // the very first real expand of a group still needs one MusicBrainz
+            // call for discogs-master — every expand after that (of this group,
+            // by anyone) needs zero. Read the cache (sync — better-sqlite3) before
+            // the releases fetch, since that fetch only ever writes the releases
+            // half and never touches discogs fields either way.
+            const cachedBeforeFetch = readReleaseGroupCache(releaseGroupId);
+            const { availableFormats, rawReleases } = await getCachedReleasesForGroup(releaseGroupId, appName);
+
+            let discogsMasterUrl = cachedBeforeFetch?.discogsMasterUrl;
+            if (!cachedBeforeFetch?.discogsChecked) {
+                discogsMasterUrl = await fetchReleaseGroupDiscogsMasterUrl(releaseGroupId, appName);
+                writeDiscogsMasterUrlCache(releaseGroupId, discogsMasterUrl);
+            }
+
+            const mapped = rawReleases.map((release) => mapRelease(release, releaseGroupId));
 
             return {
                 releaseGroupId,
@@ -715,30 +734,106 @@ function mapLabelEntity(label: MusicBrainzLabelSearchResult): LabelSearchEntity 
     };
 }
 
+interface ReleaseGroupCacheRow {
+    release_group_id: string;
+    available_formats: string;
+    raw_releases: string;
+    discogs_master_url: string | null;
+    discogs_checked: number;
+    fetched_at: number;
+}
+
+interface ReleaseGroupCacheEntry {
+    availableFormats: string[];
+    rawReleases: MusicBrainzRelease[];
+    discogsMasterUrl?: string;
+    discogsChecked: boolean;
+}
+
+function readReleaseGroupCache(releaseGroupId: string): ReleaseGroupCacheEntry | undefined {
+    const row = db
+        .prepare('SELECT * FROM release_group_cache WHERE release_group_id = ?')
+        .get(releaseGroupId) as ReleaseGroupCacheRow | undefined;
+    if (!row) return undefined;
+    if (Date.now() - row.fetched_at > RELEASE_GROUP_CACHE_TTL_MS) return undefined;
+
+    return {
+        availableFormats: JSON.parse(row.available_formats),
+        rawReleases: JSON.parse(row.raw_releases),
+        discogsMasterUrl: row.discogs_master_url ?? undefined,
+        discogsChecked: Boolean(row.discogs_checked),
+    };
+}
+
+function writeReleaseGroupReleasesCache(
+    releaseGroupId: string,
+    availableFormats: string[],
+    rawReleases: MusicBrainzRelease[],
+): void {
+    // Leaves discogs_master_url/discogs_checked alone on conflict — this is
+    // only called after a fresh releases fetch (cache miss or expired), and
+    // must not clobber a discogs lookup that's already been cached.
+    db.prepare(
+        `INSERT INTO release_group_cache (release_group_id, available_formats, raw_releases, discogs_master_url, discogs_checked, fetched_at)
+         VALUES (?, ?, ?, NULL, 0, ?)
+         ON CONFLICT(release_group_id) DO UPDATE SET
+           available_formats = excluded.available_formats,
+           raw_releases = excluded.raw_releases,
+           fetched_at = excluded.fetched_at`,
+    ).run(releaseGroupId, JSON.stringify(availableFormats), JSON.stringify(rawReleases), Date.now());
+}
+
+function writeDiscogsMasterUrlCache(releaseGroupId: string, discogsMasterUrl: string | undefined): void {
+    db.prepare('UPDATE release_group_cache SET discogs_master_url = ?, discogs_checked = 1 WHERE release_group_id = ?')
+        .run(discogsMasterUrl ?? null, releaseGroupId);
+}
+
+/**
+ * Cache-first release list for a group: a hit avoids ever calling
+ * MusicBrainz. Shared by search-time enrichment and the expand/quick-add
+ * endpoint so whichever runs first warms the cache for the other.
+ */
+async function getCachedReleasesForGroup(
+    releaseGroupId: string,
+    appName: string,
+): Promise<{ availableFormats: string[]; rawReleases: MusicBrainzRelease[] }> {
+    const cached = readReleaseGroupCache(releaseGroupId);
+    if (cached) {
+        return { availableFormats: cached.availableFormats, rawReleases: cached.rawReleases };
+    }
+
+    const rawReleases = await fetchReleasesByGroupId(releaseGroupId, appName);
+    const availableFormats = Array.from(new Set(rawReleases.map((release) => getReleaseFormat(release.media) ?? 'Unknown')));
+    writeReleaseGroupReleasesCache(releaseGroupId, availableFormats, rawReleases);
+    return { availableFormats, rawReleases };
+}
+
 async function enrichCandidate(
     candidate: CandidateReleaseGroup,
     appName: string,
 ): Promise<EnrichedReleaseGroup> {
-    // fetchReleasesByGroupId throws on failure (see its own comment), but
-    // this runs as one of ~10 concurrent candidates via Promise.all — one
-    // candidate's transient MusicBrainz failure shouldn't fail the whole
-    // search page. Degrade just this candidate instead; nothing here is
-    // cached long-term, so a later expand of this same group gets a fresh
-    // attempt (and properly surfaces a 502 if it still fails).
-    let releases: MusicBrainzRelease[] = [];
+    // getCachedReleasesForGroup (via fetchReleasesByGroupId) throws on
+    // failure, but this runs as one of ~10 concurrent candidates via
+    // Promise.all — one candidate's transient MusicBrainz failure shouldn't
+    // fail the whole search page. Degrade just this candidate instead;
+    // nothing here is cached on failure, so a later expand of this same
+    // group gets a fresh attempt (and properly surfaces a 502 if it still
+    // fails).
+    let availableFormats: string[] = [];
+    let totalReleases = 0;
     try {
-        releases = await fetchReleasesByGroupId(candidate.releaseGroupId, appName);
+        const result = await getCachedReleasesForGroup(candidate.releaseGroupId, appName);
+        availableFormats = result.availableFormats;
+        totalReleases = result.rawReleases.length;
     } catch (err) {
         console.warn(`[search] Failed to enrich release-group ${candidate.releaseGroupId}:`, err);
     }
-    const mapped = releases.map((release) => mapRelease(release, candidate.releaseGroupId));
-    const availableFormats = Array.from(new Set(mapped.map((release) => release.format ?? 'Unknown')));
 
     return {
         ...candidate,
         thumbnailUrl: `https://coverartarchive.org/release-group/${candidate.releaseGroupId}/front-250`,
         availableFormats,
-        totalReleases: mapped.length,
+        totalReleases,
     };
 }
 
