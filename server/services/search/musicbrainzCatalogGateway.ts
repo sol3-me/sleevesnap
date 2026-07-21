@@ -693,7 +693,18 @@ async function enrichCandidate(
     candidate: CandidateReleaseGroup,
     appName: string,
 ): Promise<EnrichedReleaseGroup> {
-    const releases = await fetchReleasesByGroupId(candidate.releaseGroupId, appName);
+    // fetchReleasesByGroupId throws on failure (see its own comment), but
+    // this runs as one of ~10 concurrent candidates via Promise.all — one
+    // candidate's transient MusicBrainz failure shouldn't fail the whole
+    // search page. Degrade just this candidate instead; nothing here is
+    // cached long-term, so a later expand of this same group gets a fresh
+    // attempt (and properly surfaces a 502 if it still fails).
+    let releases: MusicBrainzRelease[] = [];
+    try {
+        releases = await fetchReleasesByGroupId(candidate.releaseGroupId, appName);
+    } catch (err) {
+        console.warn(`[search] Failed to enrich release-group ${candidate.releaseGroupId}:`, err);
+    }
     const mapped = releases.map((release) => mapRelease(release, candidate.releaseGroupId));
     const availableFormats = Array.from(new Set(mapped.map((release) => release.format ?? 'Unknown')));
 
@@ -717,7 +728,16 @@ async function fetchReleasesByGroupId(
 
     const res = await fetchMusicBrainz(url.toString(), appName);
 
-    if (!res.ok) return [];
+    // A failure here (e.g. MusicBrainz rate-limiting after retries are
+    // exhausted) must throw, not silently return []. This function's result
+    // gets cached — client-side for hours, and server-side once a real
+    // cache exists (see enrichCandidate for how the search-listing path
+    // degrades a single candidate instead of failing the whole batch).
+    // Swallowing a failure into an empty array makes a real 29-release
+    // album look permanently empty.
+    if (!res.ok) {
+        throw new Error(`MusicBrainz release lookup failed for release-group ${releaseGroupId}: ${res.status}`);
+    }
 
     const data = (await res.json()) as MusicBrainzSearchResponse;
     return data.releases ?? [];
