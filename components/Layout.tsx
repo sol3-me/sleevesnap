@@ -1,8 +1,21 @@
 import { Link, Outlet, useLocation } from '@tanstack/react-router';
+import type { User } from 'firebase/auth';
 import { Toaster } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { ScanProvider } from '../contexts/ScanContext';
 import { Icons } from './Icons';
+
+const providerLabels: Record<string, string> = {
+  'google.com': 'Google',
+  'github.com': 'GitHub',
+  password: 'Email',
+};
+
+/** Friendly label for the sign-in method behind this account, e.g. "Google". */
+function getProviderLabel(user: User): string | null {
+  const providerId = user.providerData[0]?.providerId;
+  return providerId ? providerLabels[providerId] ?? null : null;
+}
 
 /** Compact account row: avatar (or initial), name/email, sign-out. */
 function AccountSection() {
@@ -11,6 +24,12 @@ function AccountSection() {
 
   const label = user.displayName ?? user.email ?? 'Signed in';
   const initial = label.charAt(0).toUpperCase();
+  const providerLabel = getProviderLabel(user);
+  // Primary line already shows the email when there's no display name, so
+  // only repeat it here alongside the provider when a display name pushed it down.
+  const secondaryLine = user.displayName && user.email
+    ? providerLabel ? `${user.email} · ${providerLabel}` : user.email
+    : providerLabel;
 
   return (
     <div className="px-3 pb-3">
@@ -29,8 +48,8 @@ function AccountSection() {
         )}
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium text-white truncate">{label}</p>
-          {user.displayName && user.email && (
-            <p className="text-[11px] text-gray-500 truncate">{user.email}</p>
+          {secondaryLine && (
+            <p className="text-[11px] text-gray-500 truncate">{secondaryLine}</p>
           )}
         </div>
         <button
@@ -125,14 +144,27 @@ export function RootLayout() {
           </nav>
           <AccountSection />
           <div className={creditClassName}>
-            <a
-              href="https://musicbrainz.org"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-gray-300 transition-colors"
-            >
-              powered by musicbrainz <span aria-label="heart">❤</span>
-            </a>
+            <div>
+              <a
+                href="https://musicbrainz.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-gray-300 transition-colors"
+              >
+                powered by musicbrainz <span aria-label="heart">❤</span>
+              </a>
+            </div>
+            <div className="flex items-center justify-between gap-2 mt-1">
+              <a
+                href="https://github.com/sol3uk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-gray-300 transition-colors"
+              >
+                made by sol3uk
+              </a>
+              <span>v{__APP_VERSION__}</span>
+            </div>
           </div>
         </aside>
 
