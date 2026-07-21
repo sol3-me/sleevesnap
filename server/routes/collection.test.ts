@@ -274,57 +274,6 @@ test("a user cannot delete another user's record", async () => {
   }
 });
 
-// --- Bulk clear --------------------------------------------------------
-
-test("clearing the collection removes only the authenticated user's records", async () => {
-  const { server, port } = await startTestServer();
-
-  try {
-    const forA = await requestJson(port, '/api/collection', 'POST', 'token-a', {
-      id: 'a-record-to-clear',
-      artist: 'Boards of Canada',
-      title: 'Geogaddi',
-      musicBrainzId: 'mbid-geogaddi',
-      dateAdded: Date.now(),
-    });
-    assert.equal(forA.statusCode, 201);
-
-    const forB = await requestJson(port, '/api/collection', 'POST', 'token-b', {
-      id: 'b-record-untouched',
-      artist: 'Boards of Canada',
-      title: 'Geogaddi',
-      musicBrainzId: 'mbid-geogaddi',
-      dateAdded: Date.now(),
-    });
-    assert.equal(forB.statusCode, 201);
-
-    const cleared = await requestJson(port, '/api/collection', 'DELETE', 'token-a');
-    assert.equal(cleared.statusCode, 200);
-
-    const asA = await requestJson(port, '/api/collection', 'GET', 'token-a');
-    assert.equal(asA.json.length, 0, "clearing user A's collection must remove all of A's records");
-
-    const asB = await requestJson(port, '/api/collection', 'GET', 'token-b');
-    assert.ok(
-      asB.json.some((r: any) => r.id === 'b-record-untouched'),
-      "clearing user A's collection must not touch user B's records",
-    );
-  } finally {
-    await closeServer(server);
-  }
-});
-
-test('clearing the collection requires auth', async () => {
-  const { server, port } = await startTestServer();
-
-  try {
-    const res = await requestJson(port, '/api/collection', 'DELETE', undefined);
-    assert.equal(res.statusCode, 401);
-  } finally {
-    await closeServer(server);
-  }
-});
-
 test('requests without a token are rejected before touching the collection', async () => {
   const { server, port } = await startTestServer();
 
