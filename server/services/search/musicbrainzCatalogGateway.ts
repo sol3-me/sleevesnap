@@ -1,3 +1,5 @@
+import { createRateLimiter } from './requestRateLimiter.js';
+
 const DEFAULT_GROUP_PAGE_SIZE = 10;
 const MAX_GROUP_PAGE_SIZE = 25;
 const RELEASE_LIMIT_PER_GROUP = 100;
@@ -5,7 +7,22 @@ const FLAT_SEARCH_LIMIT = 15;
 const ENTITY_SEARCH_DEFAULT_PAGE_SIZE = 10;
 const ENTITY_SEARCH_MAX_PAGE_SIZE = 25;
 const MAX_FETCH_ATTEMPTS = 3;
-const RETRY_BASE_DELAY_MS = 300;
+// MusicBrainz's own retry-after guidance for a 503 is measured in whole
+// seconds, not milliseconds — a 300ms/600ms backoff (the old values here)
+// recovers nothing against their real ~1 req/sec-per-IP cap.
+const RETRY_BASE_DELAY_MS = 1000;
+
+// MusicBrainz allows ~1 request/sec per IP (see their Rate Limiting docs).
+// This app had zero outbound concurrency control — a single search page
+// enriches ~10 candidates concurrently, each its own MusicBrainz call, which
+// reliably tripped their rate limit. Every call funnels through this one
+// limiter so dispatches are spaced out regardless of caller.
+// Overridable via env var: tests mock fetch directly and set this to 0 so
+// they don't pay real wall-clock time for inter-request spacing (must be
+// set before this module is imported — see search.test.ts).
+const rawMinRequestInterval = process.env.MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS;
+const MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = rawMinRequestInterval !== undefined ? Number(rawMinRequestInterval) : 1100;
+const musicBrainzRateLimiter = createRateLimiter(MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS);
 
 interface MusicBrainzArtistCredit {
     name?: string;
@@ -489,7 +506,16 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchMusicBrainz(url: string, appName: string): Promise<Response> {
+// Schedules the actual network attempt through the shared limiter, so this
+// logical call's dispatch is spaced out from every other MusicBrainz call
+// happening anywhere in the app. Internal retries (below) are already
+// delayed by their own backoff and don't re-enter the limiter — they're a
+// follow-up to a call that already took its turn, not new concurrent load.
+function fetchMusicBrainz(url: string, appName: string): Promise<Response> {
+    return musicBrainzRateLimiter.schedule(() => fetchMusicBrainzOnce(url, appName));
+}
+
+async function fetchMusicBrainzOnce(url: string, appName: string): Promise<Response> {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {

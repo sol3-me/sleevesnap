@@ -5,7 +5,14 @@ import http from 'node:http';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { searchReleasesByText, searchRouter } from './search.js';
+
+// The gateway's outbound rate limiter reads this at module load time (see
+// musicbrainzCatalogGateway.ts), so it must be set before that module (and
+// anything that transitively imports it) loads — these tests mock fetch
+// directly and don't need real inter-request spacing.
+process.env.MUSICBRAINZ_MIN_REQUEST_INTERVAL_MS = '0';
+
+const { searchReleasesByText, searchRouter } = await import('./search.js');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
