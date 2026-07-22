@@ -6,7 +6,7 @@ import { Icons } from '../components/Icons';
 import { VinylCard } from '../components/VinylCard';
 import { collectionQueryKey, useCollectionQuery, useRemoveFromCollectionMutation } from '../hooks/useCollection';
 import { useIsMobileLayout } from '../hooks/useIsMobileLayout';
-import { useSettingsQuery, useUpdateCardSizeMutation } from '../hooks/useSettings';
+import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettings';
 import { resolveArtistEntityByName } from '../lib/entityResolvers';
 import { VinylRecord } from '../types';
 
@@ -38,7 +38,7 @@ export function CollectionView() {
   const queryClient = useQueryClient();
   const isMobileLayout = useIsMobileLayout();
   const { data: settings } = useSettingsQuery();
-  const updateCardSizeMutation = useUpdateCardSizeMutation();
+  const updateSettingsMutation = useUpdateSettingsMutation();
   const collectionCardSize =
     COLLECTION_CARD_SIZE_PRESETS.find((preset) => preset.label === settings.cardSize)?.size ??
     DEFAULT_COLLECTION_CARD_SIZE;
@@ -157,7 +157,7 @@ export function CollectionView() {
             <button
               key={preset.label}
               type="button"
-              onClick={() => updateCardSizeMutation.mutate(preset.label)}
+              onClick={() => updateSettingsMutation.mutate({ cardSize: preset.label })}
               aria-pressed={settings.cardSize === preset.label}
               className={`w-7 h-7 rounded-full text-xs font-semibold transition-colors ${
                 settings.cardSize === preset.label

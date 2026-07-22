@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CardSize, getSettings, updateCardSize, UserSettings } from '../services/settingsService';
+import { getSettings, updateSettings, UserSettings, UserSettingsUpdate } from '../services/settingsService';
 
 export const settingsQueryKey = ['settings'] as const;
 
@@ -7,23 +7,26 @@ export function useSettingsQuery() {
   return useQuery({
     queryKey: settingsQueryKey,
     queryFn: getSettings,
-    initialData: { cardSize: 'M' } as UserSettings,
+    initialData: { cardSize: 'M', preferredFormat: null, preferredRegion: null } as UserSettings,
   });
 }
 
-// Optimistic: the S/M/L control should feel instant, not wait on a round
-// trip, so the cache is updated immediately and only rolled back on failure.
-export function useUpdateCardSizeMutation() {
+// Optimistic: settings controls (card size, preferred format/region) should
+// feel instant, not wait on a round trip — the cache is updated immediately
+// with just the changed fields merged in, and rolled back on failure.
+export function useUpdateSettingsMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (cardSize: CardSize) => updateCardSize(cardSize),
-    onMutate: async (cardSize) => {
+    mutationFn: (update: UserSettingsUpdate) => updateSettings(update),
+    onMutate: async (update) => {
       await queryClient.cancelQueries({ queryKey: settingsQueryKey });
       const previous = queryClient.getQueryData<UserSettings>(settingsQueryKey);
-      queryClient.setQueryData<UserSettings>(settingsQueryKey, { cardSize });
+      if (previous) {
+        queryClient.setQueryData<UserSettings>(settingsQueryKey, { ...previous, ...update });
+      }
       return { previous };
     },
-    onError: (_err, _cardSize, context) => {
+    onError: (_err, _update, context) => {
       if (context?.previous) {
         queryClient.setQueryData(settingsQueryKey, context.previous);
       }
