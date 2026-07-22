@@ -147,6 +147,102 @@ test("a user's cardSize setting does not affect another user's", async () => {
   }
 });
 
+test('GET /api/settings returns null preferredFormat/preferredRegion when no row exists yet', async () => {
+  const { server, port } = await startTestServer();
+  try {
+    const res = await requestJson(port, '/api/settings', 'GET', 'token-a');
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json.preferredFormat, null);
+    assert.equal(res.json.preferredRegion, null);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('PUT /api/settings sets preferredFormat and preferredRegion and GET reflects them', async () => {
+  const { server, port } = await startTestServer();
+  try {
+    const put = await requestJson(port, '/api/settings', 'PUT', 'token-a', {
+      preferredFormat: 'Vinyl',
+      preferredRegion: 'JP',
+    });
+    assert.equal(put.statusCode, 200);
+    assert.equal(put.json.preferredFormat, 'Vinyl');
+    assert.equal(put.json.preferredRegion, 'JP');
+
+    const get = await requestJson(port, '/api/settings', 'GET', 'token-a');
+    assert.equal(get.json.preferredFormat, 'Vinyl');
+    assert.equal(get.json.preferredRegion, 'JP');
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('PUT /api/settings is partial — updating one field leaves the others untouched', async () => {
+  const { server, port } = await startTestServer();
+  try {
+    await requestJson(port, '/api/settings', 'PUT', 'token-a', {
+      cardSize: 'L',
+      preferredFormat: 'CD',
+      preferredRegion: 'US',
+    });
+
+    const partial = await requestJson(port, '/api/settings', 'PUT', 'token-a', { preferredRegion: 'GB' });
+    assert.equal(partial.statusCode, 200);
+    assert.equal(partial.json.cardSize, 'L', 'cardSize must be untouched by a preferredRegion-only update');
+    assert.equal(partial.json.preferredFormat, 'CD', 'preferredFormat must be untouched');
+    assert.equal(partial.json.preferredRegion, 'GB');
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('PUT /api/settings clears a preference when explicitly set to null', async () => {
+  const { server, port } = await startTestServer();
+  try {
+    await requestJson(port, '/api/settings', 'PUT', 'token-a', { preferredFormat: 'Vinyl' });
+
+    const cleared = await requestJson(port, '/api/settings', 'PUT', 'token-a', { preferredFormat: null });
+    assert.equal(cleared.statusCode, 200);
+    assert.equal(cleared.json.preferredFormat, null);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('PUT /api/settings rejects a preferredFormat outside the known list', async () => {
+  const { server, port } = await startTestServer();
+  try {
+    const res = await requestJson(port, '/api/settings', 'PUT', 'token-a', { preferredFormat: 'Wax Cylinder' });
+    assert.equal(res.statusCode, 400);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('PUT /api/settings rejects a malformed preferredRegion', async () => {
+  const { server, port } = await startTestServer();
+  try {
+    const res = await requestJson(port, '/api/settings', 'PUT', 'token-a', { preferredRegion: 'usa' });
+    assert.equal(res.statusCode, 400);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("a user's preferredFormat/preferredRegion do not affect another user's", async () => {
+  const { server, port } = await startTestServer();
+  try {
+    await requestJson(port, '/api/settings', 'PUT', 'token-a', { preferredFormat: 'Vinyl', preferredRegion: 'JP' });
+
+    const asB = await requestJson(port, '/api/settings', 'GET', 'token-b');
+    assert.equal(asB.json.preferredFormat, null);
+    assert.equal(asB.json.preferredRegion, null);
+  } finally {
+    await closeServer(server);
+  }
+});
+
 test('GET /api/settings requires auth', async () => {
   const { server, port } = await startTestServer();
   try {
