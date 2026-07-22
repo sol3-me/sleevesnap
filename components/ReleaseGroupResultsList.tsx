@@ -1,5 +1,6 @@
 import { ReactElement, ReactNode, useEffect, useState } from 'react';
-import { groupReleasesByFormatAndYear, groupReleasesByFormatBucket } from '../lib/filters';
+import { classifyFormatFamily, groupReleasesByFormatAndYear, groupReleasesByFormatBucket, RepresentativePreferences } from '../lib/filters';
+import { getRegionLabel } from '../lib/regionLabel';
 import { SearchGroupReleases, SearchRelease, SearchResultGroup } from '../types';
 import { Icons } from './Icons';
 
@@ -23,44 +24,26 @@ interface ReleaseGroupResultsListProps {
     showFormatBuckets?: boolean;
     /** Shows the grouped edition count once a group has been expanded. Pre-expand, only date + type are known. */
     showReleaseCount?: boolean;
+    /** User's preferred format/region, if set — changes which pressing is picked as the default representative within a variant group. */
+    preferences?: RepresentativePreferences;
     onArtistNameClick?: (artistName: string) => void | Promise<void>;
     labelContext?: { id?: string; name: string };
     onLabelNameClick?: (labelName: string, labelId?: string) => void | Promise<void>;
 }
 
-function formatCountry(countryCode?: string) {
-    if (!countryCode) return undefined;
-    const specialRegions: Record<string, string> = {
-        XE: 'Europe',
-        XW: 'Worldwide',
-        XG: 'East Germany',
-    };
-
-    if (specialRegions[countryCode]) {
-        return `${specialRegions[countryCode]} (${countryCode})`;
-    }
-
-    try {
-        const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode);
-        if (name && name !== countryCode) {
-            return `${name} (${countryCode})`;
-        }
-    } catch {
-        // Ignore and fall through to raw region code.
-    }
-
-    return countryCode;
-}
+const formatCountry = getRegionLabel;
 
 /** Icon for a format bucket/string — returns undefined (no icon) for anything unrecognised. */
 function getFormatIcon(format: string): (() => ReactElement) | undefined {
-    const normalized = format.toLowerCase();
-    if (normalized.includes('vinyl') || normalized === 'lp') return Icons.FormatVinyl;
-    if (normalized.includes('cd')) return Icons.FormatCD;
-    if (normalized.includes('cassette') || normalized.includes('tape')) return Icons.FormatCassette;
-    if (normalized.includes('digital')) return Icons.FormatDigital;
-    if (normalized.includes('dvd') || normalized.includes('blu-ray') || normalized.includes('video')) return Icons.FormatVideo;
-    return undefined;
+    const family = classifyFormatFamily(format);
+    switch (family) {
+        case 'Vinyl': return Icons.FormatVinyl;
+        case 'CD': return Icons.FormatCD;
+        case 'Cassette': return Icons.FormatCassette;
+        case 'Digital Media': return Icons.FormatDigital;
+        case 'DVD/Blu-ray': return Icons.FormatVideo;
+        default: return undefined;
+    }
 }
 
 export function ReleaseGroupResultsList({
@@ -81,6 +64,7 @@ export function ReleaseGroupResultsList({
     compact = false,
     showFormatBuckets = false,
     showReleaseCount = true,
+    preferences,
     onArtistNameClick,
     labelContext,
     onLabelNameClick,
@@ -450,7 +434,7 @@ export function ReleaseGroupResultsList({
                                             </h5>
                                         )}
                                         <div className="space-y-3">
-                                            {groupReleasesByFormatAndYear(bucketReleases).map((variant) => {
+                                            {groupReleasesByFormatAndYear(bucketReleases, preferences).map((variant) => {
                                                 const variantKey = `${group.releaseGroupId}::${bucket}::${variant.format}::${variant.year}`;
                                                 const hasMultipleRegions = variant.releases.length > 1;
                                                 const isVariantExpanded = Boolean(expandedVariants[variantKey]);
