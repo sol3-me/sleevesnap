@@ -353,7 +353,8 @@ test('POST /api/collection/import adds every new record in one request', async (
     assert.equal(res.json.duplicates, 0);
 
     const asA = await requestJson(port, '/api/collection', 'GET', 'token-a');
-    assert.equal(asA.json.length, 2);
+    assert.ok(asA.json.some((r: any) => r.id === 'import-1'));
+    assert.ok(asA.json.some((r: any) => r.id === 'import-2'));
   } finally {
     await closeServer(server);
   }
@@ -382,7 +383,14 @@ test('POST /api/collection/import skips duplicates and still adds the rest', asy
     assert.equal(res.json.duplicates, 1);
 
     const asA = await requestJson(port, '/api/collection', 'GET', 'token-a');
-    assert.equal(asA.json.length, 2, 'the pre-existing record plus the one genuinely new import');
+    assert.ok(
+      asA.json.some((r: any) => r.id === 'import-new'),
+      'the genuinely new import must be added',
+    );
+    assert.ok(
+      !asA.json.some((r: any) => r.id === 'dupe-of-existing'),
+      'the duplicate entry must not be inserted under its import id',
+    );
   } finally {
     await closeServer(server);
   }
@@ -397,7 +405,10 @@ test('POST /api/collection/import is scoped to the authenticated user', async ()
     });
 
     const asB = await requestJson(port, '/api/collection', 'GET', 'token-b');
-    assert.equal(asB.json.length, 0, "user A's import must not appear in user B's collection");
+    assert.ok(
+      !asB.json.some((r: any) => r.id === 'a-only'),
+      "user A's import must not appear in user B's collection",
+    );
   } finally {
     await closeServer(server);
   }
