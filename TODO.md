@@ -6,6 +6,9 @@ _Captured 2026-07-16, right after Firebase Authentication merged to main. Reorga
 
 ## Recently shipped
 
+- [x] Clear collection with confirm (2026-07-21, `#7`, merged to main) — confirm dialog before clearing the whole collection.
+- [x] Redo the card "size" slider (2026-07-21, `#6`, merged to main) — replaced with an S/M/L control.
+- [x] "Show releases" one click too many (2026-07-16/2026-07-22) — quick-add (collect straight from the collapsed group card) shipped on `feature/group-releases-by-format-year`. The auto-expand-single-release half shipped first (`#5`, merged to main) but was then removed on that same branch (2026-07-22) as a side effect of deferring format/release-count fetching to expand-time — `totalReleases` isn't known before a group is expanded anymore, so there's nothing to auto-expand on. If single-release groups still feel like friction, revisit as its own idea once the new lazy-search data model has settled.
 - [x] Show the site's release/version number somewhere (2026-07-21) — shipped as part of going public: build-time `__APP_VERSION__` (from `package.json`, injected via Vite) as a fallback, live-fetched from the GitHub Releases API once a release exists. See sidebar credit block in `components/Layout.tsx`.
 - [x] Show auth provider type (Google/GitHub/email) next to the user's email in the UI (2026-07-21) — shipped in the same pass, reads `user.providerData[0].providerId`.
 - [x] Add "made by sol3uk" next to the "powered by musicbrainz" credit line (2026-07-21) — shipped in the sidebar credit block (desktop only; left the mobile header alone since it was already tight after the squish fix).
@@ -17,9 +20,7 @@ _(none currently outstanding — this tier gets drained fast, check back after t
 
 ## Quick (small, scoped, single feature area)
 
-- [ ] **[Collection & UI polish]** Clear collection with confirm
-- [ ] **[Collection & UI polish]** "Show releases" may be one click too many for some users — ideas: auto-expand when there's only one release in the group; a quick-add button for a specific release without expanding first
-- [ ] **[Collection & UI polish]** Redo the card "size" slider (already flagged in `ux-improvement-plan.md` §3.7 as a known weak control)
+_(none currently outstanding — see Recently shipped below)_
 
 ## Medium
 

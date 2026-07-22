@@ -1,13 +1,11 @@
 import { SearchResultGroup } from '../types';
 
-// Both filters below are client-side (see musicbrainz-data-model.md): the
-// server returns every release-group unfiltered, enriched with its real
-// formats/type, and these "buckets" group MusicBrainz's raw values into
-// dropdown options. Neither dropdown's option list is hardcoded — both are
-// discovered dynamically from real results (see discoveredFormatBuckets /
-// discoveredTypeBuckets in DiscoverView), so an unfamiliar MusicBrainz value
-// (a new format string, or a primary type like "Broadcast") still gets its
-// own option rather than being silently dropped.
+// bucketForFormat groups MusicBrainz's raw format strings into coarser
+// buckets, used to organise an already-expanded group's release list into
+// Vinyl/CD/etc. sections (see groupReleasesByFormatBucket). There is no
+// top-level Format filter anymore — release-groups no longer carry format
+// data at search time (see musicbrainz-data-model.md), only the Type filter
+// does since primaryType comes free with every search result.
 export const PRIORITY_FORMAT_BUCKETS = ['Vinyl', 'CD'];
 const KNOWN_FORMAT_BUCKETS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'Vinyl', pattern: /vinyl|\blp\b/i },
@@ -23,10 +21,6 @@ export function bucketForFormat(rawFormat: string): string {
   return known ? known.name : rawFormat;
 }
 
-export function formatBucketsForGroup(group: SearchResultGroup): string[] {
-  return Array.from(new Set(group.availableFormats.map(bucketForFormat)));
-}
-
 // A release-group's type is a direct passthrough of MusicBrainz's own
 // primary-type (Album/Single/EP/...), unlike format there's no stringly
 // variant to merge (e.g. no "12" Vinyl" vs "Vinyl" equivalent for type).
@@ -35,9 +29,9 @@ export function typeBucketForGroup(group: SearchResultGroup): string {
 }
 
 // Shared ordering: priority items first (in the order given), then
-// everything else alphabetically, Unknown last. Used for both the format and
-// type dropdowns, and for grouping releases inside an expanded group's "Show
-// releases" accordion, so all three stay visually consistent.
+// everything else alphabetically, Unknown last. Used for the type dropdown,
+// and for grouping releases inside an expanded group's "Show releases"
+// accordion, so both stay visually consistent.
 export function sortBucketsWithPriority(buckets: string[], priority: string[]): string[] {
   const priorityPresent = priority.filter((bucket) => buckets.includes(bucket));
   const rest = buckets
@@ -47,18 +41,17 @@ export function sortBucketsWithPriority(buckets: string[], priority: string[]): 
   return [...priorityPresent, ...rest, ...unknown];
 }
 
-export function sortFormatBuckets(buckets: string[]): string[] {
-  return sortBucketsWithPriority(buckets, PRIORITY_FORMAT_BUCKETS);
-}
-
 export function sortTypeBuckets(buckets: string[]): string[] {
   return sortBucketsWithPriority(buckets, PRIORITY_TYPE_BUCKETS);
 }
 
-// Groups a flat release list into format buckets (same grouping as the
-// top-level filter), sorted the same way, while preserving each release's
-// exact original format string (e.g. "2xCD", "CD-R") — grouping is purely a
-// display concern, not a data-collapsing one.
+export function sortFormatBuckets(buckets: string[]): string[] {
+  return sortBucketsWithPriority(buckets, PRIORITY_FORMAT_BUCKETS);
+}
+
+// Groups a flat release list into format buckets, Vinyl/CD prioritised, while
+// preserving each release's exact original format string (e.g. "2xCD",
+// "CD-R") — grouping is purely a display concern, not a data-collapsing one.
 export function groupReleasesByFormatBucket<T extends { format?: string }>(
   releases: T[],
 ): Array<{ bucket: string; releases: T[] }> {
