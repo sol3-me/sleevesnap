@@ -64,6 +64,11 @@ export function initDb(): void {
       fetched_at         INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS user_settings (
+      user_id     TEXT PRIMARY KEY,
+      card_size   TEXT NOT NULL DEFAULT 'M'
+    );
+
     CREATE TABLE IF NOT EXISTS scan_history (
       id                  TEXT PRIMARY KEY,
       created_at          INTEGER NOT NULL,
