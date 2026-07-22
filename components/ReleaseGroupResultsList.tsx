@@ -1,6 +1,6 @@
 import { ReactElement, ReactNode, useEffect, useState } from 'react';
 import { classifyFormatFamily, groupReleasesByFormatAndYear, groupReleasesByFormatBucket, RepresentativePreferences } from '../lib/filters';
-import { getRegionLabel } from '../lib/regionLabel';
+import { getRegionFlagEmoji, getRegionLabel } from '../lib/regionLabel';
 import { SearchGroupReleases, SearchRelease, SearchResultGroup } from '../types';
 import { Icons } from './Icons';
 
@@ -143,7 +143,7 @@ export function ReleaseGroupResultsList({
     // Used both for a variant group's representative pressing and for the
     // single-release case (a group with no other regions to collapse).
     const renderReleaseCard = (record: SearchRelease, groupThumbnailUrl: SearchResultGroup['thumbnailUrl'], extraContent?: ReactNode) => {
-        const country = formatCountry(record.country);
+        const country = record.country ? `${getRegionFlagEmoji(record.country)} ${formatCountry(record.country)}` : undefined;
 
         return (
             <div className={`flex ${compact ? 'bg-vinyl-950/70 rounded-lg p-2.5' : 'bg-vinyl-900/70 rounded-xl p-3'} border border-white/5 gap-3`}>
@@ -216,7 +216,7 @@ export function ReleaseGroupResultsList({
     // status/edition, and MBID, no repeated cover thumbnail (the whole point
     // of collapsing is to stop repeating near-identical visual weight).
     const renderRegionRow = (record: SearchRelease) => {
-        const country = formatCountry(record.country) ?? 'Unknown region';
+        const country = record.country ? `${getRegionFlagEmoji(record.country)} ${formatCountry(record.country)}` : 'Unknown region';
 
         return (
             <div className={`flex items-center justify-between gap-3 ${compact ? 'bg-vinyl-950/50 p-2' : 'bg-vinyl-950/50 p-2.5'} rounded-lg border border-white/5`}>
