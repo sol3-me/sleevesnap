@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { getRegionLabel, listRegionOptions } from './regionLabel';
+import { getRegionFlagEmoji, getRegionLabel, listRegionOptions } from './regionLabel';
 
 test('getRegionLabel returns undefined for an absent code', () => {
   assert.equal(getRegionLabel(undefined), undefined);
@@ -44,4 +44,22 @@ test('listRegionOptions has no duplicate codes and is sorted by label', () => {
   const labels = options.map((o) => o.label);
   const sorted = [...labels].sort((a, b) => a.localeCompare(b));
   assert.deepEqual(labels, sorted);
+});
+
+test('getRegionFlagEmoji converts a real ISO code into its flag emoji', () => {
+  assert.equal(getRegionFlagEmoji('GB'), '🇬🇧');
+  assert.equal(getRegionFlagEmoji('JP'), '🇯🇵');
+  assert.equal(getRegionFlagEmoji('US'), '🇺🇸');
+});
+
+test('getRegionFlagEmoji falls back to a globe for MusicBrainz pseudo-regions (no real flag exists)', () => {
+  assert.equal(getRegionFlagEmoji('XW'), '🌐');
+  assert.equal(getRegionFlagEmoji('XE'), '🌐');
+  assert.equal(getRegionFlagEmoji('XG'), '🌐');
+});
+
+test('getRegionFlagEmoji falls back to a globe for malformed input', () => {
+  assert.equal(getRegionFlagEmoji('usa'), '🌐');
+  assert.equal(getRegionFlagEmoji(''), '🌐');
+  assert.equal(getRegionFlagEmoji('1G'), '🌐');
 });
