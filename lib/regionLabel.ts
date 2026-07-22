@@ -62,3 +62,19 @@ export function listRegionOptions(): RegionOption[] {
     .map((code) => ({ code, label: getRegionLabel(code)! }))
     .sort((a, b) => a.label.localeCompare(b.label));
 }
+
+const GLOBE_FALLBACK = '🌐';
+// Regional Indicator Symbol Letter 'A' — a real flag emoji is just two of
+// these, offset from 'A'/'B'/etc. by this base code point.
+const REGIONAL_INDICATOR_BASE = 0x1f1e6;
+
+/** Flag emoji for a real 2-letter region code; a globe for MusicBrainz's pseudo-codes (no real flag exists) or malformed input. */
+export function getRegionFlagEmoji(countryCode: string): string {
+  const normalized = countryCode.toUpperCase();
+  if (SPECIAL_REGIONS[normalized] || !/^[A-Z]{2}$/.test(normalized)) {
+    return GLOBE_FALLBACK;
+  }
+
+  const codePoints = [...normalized].map((letter) => REGIONAL_INDICATOR_BASE + (letter.charCodeAt(0) - 65));
+  return String.fromCodePoint(...codePoints);
+}
