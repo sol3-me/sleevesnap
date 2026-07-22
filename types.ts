@@ -28,6 +28,9 @@ export interface SearchRelease extends VinylRecord {
   releaseUrl?: string;
 }
 
+// Release-group-only: title/artist/type/date/cover-art. Formats, release
+// count, and discogs-master-url don't exist here anymore — they only become
+// known once a group is deliberately expanded, see SearchGroupReleases.
 export interface SearchResultGroup {
   releaseGroupId: string;
   title: string;
@@ -36,9 +39,6 @@ export interface SearchResultGroup {
   secondaryTypes?: string[];
   releaseGroupUrl: string;
   thumbnailUrl?: string;
-  availableFormats: string[];
-  discogsMasterUrl?: string;
-  totalReleases: number;
   /** MusicBrainz's Album/Single/EP/etc. classification — same title, different real release. */
   primaryType?: string;
 }

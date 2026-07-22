@@ -27,12 +27,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Real /ws/2/release-group search responses for "queens of the stone age",
 // captured live at offset 0/5/10 (limit=5 each), plus a consolidated map of
-// real /ws/2/release?query=rgid:X responses (format info) for every
-// candidate release-group id appearing across those three pages. Several of
-// these candidates are digital-only tribute/parody releases with no vinyl or
-// CD edition — real MusicBrainz data used to prove that Discover search
-// returns every candidate unfiltered, each enriched with its real formats,
-// rather than dropping the ones that don't have a physical release.
+// real /ws/2/release?query=rgid:X responses (format info) used only by the
+// GET .../releases (deliberate-expand) tests further down. Several of these
+// candidates are digital-only tribute/parody releases with no vinyl or CD
+// edition — real MusicBrainz data used to prove that Discover search returns
+// every candidate unfiltered, without ever needing release-level data at
+// search time, rather than dropping the ones that don't have a physical
+// release.
 function loadRgFixture(name: string) {
     return JSON.parse(fs.readFileSync(path.join(__dirname, '__fixtures__', name), 'utf-8'));
 }
@@ -48,8 +49,9 @@ const rgReleasesById = loadRgFixture('release-group-releases-by-id-qotsa-real.js
 // release exists for this album at all. This is the real report that started
 // the client-side-filtering pivot: MusicBrainz's format data is incomplete
 // (the user owns an actual vinyl pressing of this album), so Discover search
-// must surface the release-group regardless, enriched with whatever real
-// format data MusicBrainz does have, rather than silently hiding it.
+// must surface the release-group regardless — search no longer looks at
+// format at all, but this stays as a regression guard against any future
+// primary-type/format filtering silently dropping oddities like this one.
 const laminatedDenimExact = loadRgFixture('release-group-search-laminated-denim-real.json');
 const laminatedDenimFallback = loadRgFixture('release-group-search-laminated-denim-fallback-real.json');
 const laminatedDenimReleases = loadRgFixture('release-releases-by-group-laminated-denim-real.json');
@@ -315,11 +317,11 @@ test('GET group releases returns 502 (not a false-success empty list) when Music
 });
 
 // --- Server-side release-group cache -----------------------------------
-// enrichCandidate (search time) and getReleaseGroupReleases (expand time)
-// used to independently fetch the same release-group's full release list
-// from MusicBrainz — doubling calls for every group a user ever expanded,
-// and contributing to the rate-limit bursts fixed above. These verify a
-// shared, persistent server-side cache eliminates the duplicate fetch.
+// getReleaseGroupReleases (the deliberate-expand endpoint) is the only path
+// that ever fetches a release-group's release list from MusicBrainz — search
+// itself stays lightweight (see the lazy-search tests further down). This
+// verifies repeated expands of the same group are served from a shared,
+// persistent server-side cache instead of re-fetching every time.
 
 test('GET group releases only fetches from MusicBrainz once across repeated requests (server-side cache)', async () => {
     let releaseCallCount = 0;
@@ -375,7 +377,11 @@ test('GET group releases only fetches from MusicBrainz once across repeated requ
     }
 });
 
-test('POST /api/search/groups warms the release-group cache so a later GET .../releases reuses it', async () => {
+// Search itself must stay "release-group only" — no per-candidate release or
+// discogs lookups — so a page of 10 results is one fast MusicBrainz call, not
+// up to 20 rate-limited ones. Only a deliberate expand (GET .../releases)
+// should ever trigger a release-level fetch for a given group.
+test('POST /api/search/groups never fetches release-level data — only a deliberate GET .../releases does', async () => {
     let releaseCallCount = 0;
     globalThis.fetch = (async (input) => {
         const target =
@@ -428,17 +434,15 @@ test('POST /api/search/groups warms the release-group cache so a later GET .../r
             pageSize: 5,
         });
         assert.equal(searchRes.statusCode, 200);
-        assert.equal(releaseCallCount, 1, 'search-time enrichment should have fetched the release list once');
+        assert.equal(releaseCallCount, 0, 'search should return lightweight candidates without fetching release data for any of them');
+        assert.equal(Object.prototype.hasOwnProperty.call(searchRes.json.groups[0], 'availableFormats'), false);
+        assert.equal(Object.prototype.hasOwnProperty.call(searchRes.json.groups[0], 'totalReleases'), false);
+        assert.equal(Object.prototype.hasOwnProperty.call(searchRes.json.groups[0], 'discogsMasterUrl'), false);
 
         const releasesRes = await requestJson(port, '/api/search/groups/warm-test-group/releases');
         assert.equal(releasesRes.statusCode, 200);
         assert.equal(releasesRes.json.releases.length, 1);
-
-        assert.equal(
-            releaseCallCount,
-            1,
-            'expanding the group afterward should reuse the cache warmed by the search, not refetch MusicBrainz',
-        );
+        assert.equal(releaseCallCount, 1, 'expanding the group is the only thing that should trigger a release-data fetch');
     } finally {
         await closeServer(server);
     }
@@ -593,13 +597,16 @@ test('POST /api/search/groups normalizes punctuation-heavy free-text input befor
     }
 });
 
-test('POST /api/search/groups returns every raw candidate from the batch, unfiltered, each enriched with its real (unfiltered) formats (real data)', async () => {
+test('POST /api/search/groups returns every raw candidate from the batch, unfiltered, without fetching release-level data for any of them (real data)', async () => {
     let releaseGroupSearchCalls = 0;
+    let releaseLookupCalls = 0;
     const baseFetch = mockReleaseGroupEndpoints();
     globalThis.fetch = (async (input, init) => {
         const target =
             typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-        if (new URL(target).pathname === '/ws/2/release-group') releaseGroupSearchCalls += 1;
+        const pathname = new URL(target).pathname;
+        if (pathname === '/ws/2/release-group') releaseGroupSearchCalls += 1;
+        if (pathname === '/ws/2/release') releaseLookupCalls += 1;
         return baseFetch(input, init);
     }) as typeof fetch;
 
@@ -619,6 +626,7 @@ test('POST /api/search/groups returns every raw candidate from the batch, unfilt
         // Exactly one raw batch is fetched — no retry rounds are needed
         // anymore since nothing gets filtered out and re-fetched to top up.
         assert.equal(releaseGroupSearchCalls, 1);
+        assert.equal(releaseLookupCalls, 0, 'search should never fetch per-candidate release data — only a deliberate expand does');
 
         const byId = new Map(
             res.json.groups.map((g: { releaseGroupId: string }) => [g.releaseGroupId, g]),
@@ -631,24 +639,13 @@ test('POST /api/search/groups returns every raw candidate from the batch, unfilt
             'd6657084-d471-3b6a-9b6d-17621da96cdb', // Lullaby Renditions of Queens of the Stone Age
         ]);
 
-        // totalReleases now counts every release in the group (was a
-        // format-filtered count before) and availableFormats reports every
-        // real format found, including ones that don't match any particular
-        // checkbox — e.g. "Digital Media" here, which the old server-side
-        // filter would have silently dropped from the set.
-        const qotsa = byId.get('17ee0d7f-4a9d-317f-a0b0-8ca528a34b19') as {
-            totalReleases: number;
-            availableFormats: string[];
-        };
-        assert.equal(qotsa.totalReleases, 17);
-        assert.deepEqual(qotsa.availableFormats, ['CD', '12" Vinyl', 'Digital Media']);
-
-        const kyuss = byId.get('351ed669-d97b-4b2e-80c2-e9c504992c13') as {
-            totalReleases: number;
-            availableFormats: string[];
-        };
-        assert.equal(kyuss.totalReleases, 2);
-        assert.deepEqual(kyuss.availableFormats, ['CD']);
+        // No availableFormats/totalReleases/discogsMasterUrl on list items
+        // anymore — that data only exists once a group is deliberately
+        // expanded (see GET .../releases tests above).
+        const qotsa = byId.get('17ee0d7f-4a9d-317f-a0b0-8ca528a34b19') as Record<string, unknown>;
+        assert.equal(Object.prototype.hasOwnProperty.call(qotsa, 'availableFormats'), false);
+        assert.equal(Object.prototype.hasOwnProperty.call(qotsa, 'totalReleases'), false);
+        assert.equal(Object.prototype.hasOwnProperty.call(qotsa, 'discogsMasterUrl'), false);
     } finally {
         await closeServer(server);
     }
@@ -770,7 +767,8 @@ test('POST /api/search/groups switches to the fallback query at the correct disj
     }
 });
 
-test('POST /api/search/groups returns Laminated Denim even though MusicBrainz has no vinyl/CD release for it — formats are enriched, never used to hide results (real data)', async () => {
+test('POST /api/search/groups returns Laminated Denim even though MusicBrainz has no vinyl/CD release for it — candidates are never format-filtered (real data)', async () => {
+    let releaseLookupCalls = 0;
     globalThis.fetch = (async (input) => {
         const target =
             typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -783,6 +781,7 @@ test('POST /api/search/groups returns Laminated Denim even though MusicBrainz ha
         }
 
         if (url.pathname === '/ws/2/release') {
+            releaseLookupCalls += 1;
             return jsonResponse(laminatedDenimReleases);
         }
 
@@ -808,8 +807,7 @@ test('POST /api/search/groups returns Laminated Denim even though MusicBrainz ha
         assert.equal(res.json.hasMore, false);
         assert.equal(res.json.groups.length, 1);
         assert.equal(res.json.groups[0].releaseGroupId, '5e2fb12b-ab85-4fe7-be3c-48687f104502');
-        assert.deepEqual(res.json.groups[0].availableFormats, ['Digital Media']);
-        assert.equal(res.json.groups[0].totalReleases, 2);
+        assert.equal(releaseLookupCalls, 0, 'a digital-only release-group must still surface in the list without any release-level fetch');
     } finally {
         await closeServer(server);
     }

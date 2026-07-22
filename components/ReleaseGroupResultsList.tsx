@@ -15,13 +15,13 @@ interface ReleaseGroupResultsListProps {
     isReleaseActionDisabled?: (record: SearchRelease) => boolean;
     getReleaseActionLabel?: (record: SearchRelease, disabled: boolean) => string;
     getReleaseActionClassName?: (record: SearchRelease, disabled: boolean) => string;
-    getVisibleReleases?: (group: SearchResultGroup, detail?: SearchGroupReleases) => SearchRelease[];
     isGroupOwned?: (releaseGroupId: string) => boolean;
     showGroupLinks?: boolean;
     groupContainerClassName?: string;
     emptyReleasesMessage?: string;
     compact?: boolean;
     showFormatBuckets?: boolean;
+    /** Shows the grouped edition count once a group has been expanded. Pre-expand, only date + type are known. */
     showReleaseCount?: boolean;
     onArtistNameClick?: (artistName: string) => void | Promise<void>;
     labelContext?: { id?: string; name: string };
@@ -74,7 +74,6 @@ export function ReleaseGroupResultsList({
     isReleaseActionDisabled,
     getReleaseActionLabel,
     getReleaseActionClassName,
-    getVisibleReleases,
     isGroupOwned,
     showGroupLinks = true,
     groupContainerClassName,
@@ -261,27 +260,21 @@ export function ReleaseGroupResultsList({
         <div className="space-y-3">
             {groups.map((group) => {
                 const details = groupReleases[group.releaseGroupId];
-                const releases = getVisibleReleases
-                    ? getVisibleReleases(group, details)
-                    : (details?.releases ?? []);
+                const releases = details?.releases ?? [];
                 const groupedReleases = showFormatBuckets
                     ? groupReleasesByFormatBucket<SearchRelease>(releases)
                     : [{ bucket: '', releases }];
                 const isExpanded = Boolean(expandedGroups[group.releaseGroupId]);
                 const loadingGroup = Boolean(loadingGroupIds[group.releaseGroupId]);
-                const releaseCount = group.totalReleases;
-                // Once releases have actually been fetched (expanded or
-                // quick-added), swap the raw MusicBrainz count for the
-                // grouped edition count — otherwise "35 releases" reads as a
-                // promise that expanding shows 35 rows, when regional
-                // duplicates now collapse into far fewer. Falls back to the
-                // raw count beforehand, since computing this needs the data.
+                // Release count/formats aren't known until a group is
+                // deliberately expanded (search itself no longer fetches
+                // them — see musicbrainz-data-model.md) — so this is only
+                // ever defined post-expand, never as an upfront promise.
                 const groupedEditionCount = details ? groupReleasesByFormatAndYear(releases).length : undefined;
-                const canExpand = !showReleaseCount || releaseCount !== 1;
                 const discogsSearchUrl = `https://www.discogs.com/search/?q=${encodeURIComponent(
                     `${group.artist} ${group.title}`,
                 )}&type=master`;
-                const discogsGroupUrl = group.discogsMasterUrl ?? details?.discogsMasterUrl ?? discogsSearchUrl;
+                const discogsGroupUrl = details?.discogsMasterUrl ?? discogsSearchUrl;
                 const groupOwned = isGroupOwned?.(group.releaseGroupId) ?? false;
 
                 const outerClassName = groupContainerClassName
@@ -355,12 +348,12 @@ export function ReleaseGroupResultsList({
                                     <p className="text-xs text-gray-500 mt-1.5 truncate">
                                         {[
                                             group.firstReleaseDate?.slice(0, 4),
-                                            showReleaseCount
-                                                ? groupedEditionCount !== undefined
-                                                    ? `${groupedEditionCount} edition${groupedEditionCount === 1 ? '' : 's'}`
-                                                    : `${releaseCount} release${releaseCount === 1 ? '' : 's'}`
+                                            showReleaseCount && groupedEditionCount !== undefined
+                                                ? `${groupedEditionCount} edition${groupedEditionCount === 1 ? '' : 's'}`
                                                 : undefined,
-                                            group.availableFormats.length > 0 ? group.availableFormats.join(', ') : undefined,
+                                            details && details.availableFormats.length > 0
+                                                ? details.availableFormats.join(', ')
+                                                : undefined,
                                         ]
                                             .filter(Boolean)
                                             .join(' · ')}
@@ -383,7 +376,7 @@ export function ReleaseGroupResultsList({
                                                 className="inline-flex items-center gap-1 text-gray-500 hover:text-vinyl-accent transition-colors"
                                                 onClick={(e) => e.stopPropagation()}
                                             >
-                                                {group.discogsMasterUrl || details?.discogsMasterUrl ? 'Discogs Master' : 'Discogs Search'} <Icons.ExternalLink />
+                                                {details?.discogsMasterUrl ? 'Discogs Master' : 'Discogs Search'} <Icons.ExternalLink />
                                             </a>
                                         </div>
                                     )}
@@ -425,14 +418,14 @@ export function ReleaseGroupResultsList({
                                     }}
                                     className={`w-full sm:w-auto ${compact ? 'sm:min-w-[130px]' : 'sm:min-w-[150px]'} px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm font-medium text-gray-200 flex items-center justify-center gap-1.5 hover:bg-white/10 transition-colors`}
                                 >
-                                    <span>{canExpand ? (isExpanded ? 'Hide releases' : 'Show releases') : 'Single release'}</span>
+                                    <span>{isExpanded ? 'Hide releases' : 'Show releases'}</span>
                                     <span className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}><Icons.ChevronDown /></span>
                                 </button>
                             </div>
                         </div>
 
                         {isExpanded && (
-                            <div className={`${compact ? 'px-3 pb-3' : 'px-4 pb-4'} space-y-3 border-t border-white/5`}>
+                            <div className={`${compact ? 'px-3 pb-3 pt-3' : 'px-4 pb-4 pt-4'} space-y-3 border-t border-white/5`}>
                                 {(!details || loadingGroup) && (
                                     <div className="flex items-center gap-2 text-sm text-gray-500 py-3">
                                         <span className="w-3.5 h-3.5 border-2 border-vinyl-accent border-t-transparent rounded-full animate-spin" />

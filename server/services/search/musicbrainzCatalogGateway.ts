@@ -137,11 +137,15 @@ interface CandidateReleaseGroup {
     primaryType?: string;
 }
 
-interface EnrichedReleaseGroup extends CandidateReleaseGroup {
+// Search results are release-group-only: title/artist/type/date plus a
+// cover-art URL (no MusicBrainz call — coverartarchive.org is just a static
+// image path). Formats, release count, and discogs-master-url only exist
+// once a group is deliberately expanded (see getReleaseGroupReleases) — see
+// SearchGroupReleases. Fetching those eagerly for every one of ~10 search
+// results is what used to make a single search take 10+ seconds under the
+// MusicBrainz rate limiter (see requestRateLimiter.ts).
+interface ReleaseGroupListItem extends CandidateReleaseGroup {
     thumbnailUrl?: string;
-    availableFormats: string[];
-    totalReleases: number;
-    discogsMasterUrl?: string;
 }
 
 export interface ArtistSearchEntity {
@@ -233,7 +237,7 @@ export interface SearchGroupsResponse {
     total: number;
     hasMore: boolean;
     isTotalExact: boolean;
-    groups: EnrichedReleaseGroup[];
+    groups: ReleaseGroupListItem[];
 }
 
 interface SearchGroupReleases {
@@ -290,13 +294,6 @@ export function createMusicBrainzCatalogGateway(appName: string): CatalogSearchG
                     ? await collectIndexedDiscoverPage(querySource, appName, safePage, safePageSize)
                     : await collectDiscoverPage(querySource, appName, safePage, safePageSize);
 
-            const groups = await Promise.all(
-                discoverPage.groups.map(async (group) => ({
-                    ...group,
-                    discogsMasterUrl: await fetchReleaseGroupDiscogsMasterUrl(group.releaseGroupId, appName),
-                })),
-            );
-
             return {
                 query: querySource,
                 page: safePage,
@@ -304,18 +301,19 @@ export function createMusicBrainzCatalogGateway(appName: string): CatalogSearchG
                 total: discoverPage.total,
                 hasMore: discoverPage.hasMore,
                 isTotalExact: discoverPage.isTotalExact,
-                groups,
+                groups: discoverPage.groups,
             };
         },
 
         async getReleaseGroupReleases(releaseGroupId) {
-            // Releases and discogs-master are cached independently: search-time
-            // enrichment (enrichCandidate) only ever warms the releases half, so
-            // the very first real expand of a group still needs one MusicBrainz
-            // call for discogs-master — every expand after that (of this group,
-            // by anyone) needs zero. Read the cache (sync — better-sqlite3) before
-            // the releases fetch, since that fetch only ever writes the releases
-            // half and never touches discogs fields either way.
+            // Releases and discogs-master are cached independently and both are
+            // only ever populated here — search itself never touches either
+            // (see ReleaseGroupListItem). So the very first expand of a group
+            // needs one MusicBrainz call for releases and one for discogs-master;
+            // every expand after that (of this group, by anyone) needs zero.
+            // Read the cache (sync — better-sqlite3) before the releases fetch,
+            // since that fetch only ever writes the releases half and never
+            // touches discogs fields either way.
             const cachedBeforeFetch = readReleaseGroupCache(releaseGroupId);
             const { availableFormats, rawReleases } = await getCachedReleasesForGroup(releaseGroupId, appName);
 
@@ -396,11 +394,11 @@ async function fetchReleaseGroupPage(
     appName: string,
     offset: number,
     pageSize: number,
-): Promise<{ groups: EnrichedReleaseGroup[]; rawCount: number }> {
+): Promise<{ groups: ReleaseGroupListItem[]; rawCount: number }> {
     const response = await fetchReleaseGroupsByQuery(query, appName, pageSize, offset);
     const rawCount = response.count ?? 0;
     const candidates = (response['release-groups'] ?? []).map(mapReleaseGroupCandidate);
-    const groups = await Promise.all(candidates.map((candidate) => enrichCandidate(candidate, appName)));
+    const groups = candidates.map(toListItem);
 
     return { groups, rawCount };
 }
@@ -410,7 +408,7 @@ async function collectDiscoverPage(
     appName: string,
     page: number,
     pageSize: number,
-): Promise<{ groups: EnrichedReleaseGroup[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
+): Promise<{ groups: ReleaseGroupListItem[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
     const normalizedQuery = normalizeSearchInput(query);
     const exactQuery = buildExactSearchQuery(normalizedQuery);
     const offset = (page - 1) * pageSize;
@@ -440,7 +438,7 @@ async function collectIndexedDiscoverPage(
     appName: string,
     page: number,
     pageSize: number,
-): Promise<{ groups: EnrichedReleaseGroup[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
+): Promise<{ groups: ReleaseGroupListItem[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
     const offset = (page - 1) * pageSize;
     const pageResult = await fetchReleaseGroupPage(indexedQuery, appName, offset, pageSize);
     const hasMore = offset + pageResult.groups.length < pageResult.rawCount;
@@ -457,7 +455,7 @@ async function collectArtistBrowseDiscoverPage(
     appName: string,
     page: number,
     pageSize: number,
-): Promise<{ groups: EnrichedReleaseGroup[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
+): Promise<{ groups: ReleaseGroupListItem[]; total: number; isTotalExact: boolean; hasMore: boolean }> {
     const artistId = intent.artistId?.trim();
     if (!artistId) {
         throw new Error('artistId is required for artist discography browse');
@@ -470,7 +468,7 @@ async function collectArtistBrowseDiscoverPage(
 
     const offset = (page - 1) * pageSize;
     const pageCandidates = sortedCandidates.slice(offset, offset + pageSize);
-    const groups = await Promise.all(pageCandidates.map((candidate) => enrichCandidate(candidate, appName)));
+    const groups = pageCandidates.map(toListItem);
     const hasMore = offset + groups.length < sortedCandidates.length;
 
     return {
@@ -808,32 +806,10 @@ async function getCachedReleasesForGroup(
     return { availableFormats, rawReleases };
 }
 
-async function enrichCandidate(
-    candidate: CandidateReleaseGroup,
-    appName: string,
-): Promise<EnrichedReleaseGroup> {
-    // getCachedReleasesForGroup (via fetchReleasesByGroupId) throws on
-    // failure, but this runs as one of ~10 concurrent candidates via
-    // Promise.all — one candidate's transient MusicBrainz failure shouldn't
-    // fail the whole search page. Degrade just this candidate instead;
-    // nothing here is cached on failure, so a later expand of this same
-    // group gets a fresh attempt (and properly surfaces a 502 if it still
-    // fails).
-    let availableFormats: string[] = [];
-    let totalReleases = 0;
-    try {
-        const result = await getCachedReleasesForGroup(candidate.releaseGroupId, appName);
-        availableFormats = result.availableFormats;
-        totalReleases = result.rawReleases.length;
-    } catch (err) {
-        console.warn(`[search] Failed to enrich release-group ${candidate.releaseGroupId}:`, err);
-    }
-
+function toListItem(candidate: CandidateReleaseGroup): ReleaseGroupListItem {
     return {
         ...candidate,
         thumbnailUrl: `https://coverartarchive.org/release-group/${candidate.releaseGroupId}/front-250`,
-        availableFormats,
-        totalReleases,
     };
 }
 

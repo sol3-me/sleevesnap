@@ -452,7 +452,6 @@ test('POST /api/scan validates each guess with a structured release-group search
     assert.equal(sftd.title, 'Songs for the Deaf');
     assert.equal(sftd.validated, true);
     assert.equal(sftd.matchedGroups[0]?.releaseGroupId, 'group-sftd');
-    assert.equal(sftd.matchedGroups[0]?.availableFormats?.includes('12" Vinyl'), true);
 
     assert.equal(lullabies.title, 'Lullabies to Paralyze');
     assert.equal(lullabies.validated, false);

@@ -7,12 +7,9 @@ import { Icons } from '../components/Icons';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { useAddToCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
 import {
-  bucketForFormat,
   FilterState,
-  formatBucketsForGroup,
   loadStoredFilterState,
   pickRepresentativeRelease,
-  sortFormatBuckets,
   sortTypeBuckets,
   typeBucketForGroup,
 } from '../lib/filters';
@@ -39,7 +36,6 @@ const routeApi = getRouteApi('/discover');
 
 const SEARCH_PAGE_SIZE = 10;
 const ENTITY_PAGE_SIZE = 10;
-const SEARCH_FORMAT_FILTERS_KEY = 'sleevesnap:search-filters:v2';
 const SEARCH_TYPE_FILTERS_KEY = 'sleevesnap:search-type-filters:v1';
 
 const defaultSearchPage: SearchResultPage = {
@@ -91,9 +87,7 @@ export function DiscoverView() {
   const [groupReleases, setGroupReleases] = useState<Record<string, SearchGroupReleases>>({});
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [loadingGroupIds, setLoadingGroupIds] = useState<Record<string, true>>({});
-  const [formatFilters, setFormatFilters] = useState<FilterState>(() => loadStoredFilterState(SEARCH_FORMAT_FILTERS_KEY));
   const [typeFilters, setTypeFilters] = useState<FilterState>(() => loadStoredFilterState(SEARCH_TYPE_FILTERS_KEY));
-  const [discoveredFormatBuckets, setDiscoveredFormatBuckets] = useState<string[]>([]);
   const [discoveredTypeBuckets, setDiscoveredTypeBuckets] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isSearchingEntities, setIsSearchingEntities] = useState(false);
@@ -170,15 +164,6 @@ export function DiscoverView() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      window.localStorage.setItem(SEARCH_FORMAT_FILTERS_KEY, JSON.stringify(formatFilters));
-    } catch {
-      // Ignore storage write failures.
-    }
-  }, [formatFilters]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
       window.localStorage.setItem(SEARCH_TYPE_FILTERS_KEY, JSON.stringify(typeFilters));
     } catch {
       // Ignore storage write failures.
@@ -208,18 +193,9 @@ export function DiscoverView() {
         ms: Math.round(performance.now() - startedAt),
       });
       setSearchPage(result);
-      // Accumulate format buckets across pages of the same query (so
+      // Accumulate type buckets across pages of the same query (so
       // checkboxes don't disappear/reappear while paging), but start fresh
       // for a brand new query.
-      setDiscoveredFormatBuckets((prev) => {
-        const base = isNewQuery ? [] : prev;
-        const next = new Set(base);
-        for (const group of result.groups) {
-          for (const bucket of formatBucketsForGroup(group)) next.add(bucket);
-        }
-        return Array.from(next);
-      });
-      // Same accumulate-across-pages, reset-on-new-query pattern for type.
       setDiscoveredTypeBuckets((prev) => {
         const base = isNewQuery ? [] : prev;
         const next = new Set(base);
@@ -444,54 +420,15 @@ export function DiscoverView() {
     [],
   );
 
-  // Single-release groups gain nothing from the extra click — expand them as
-  // soon as they appear, silently so it doesn't flash a loading state.
-  useEffect(() => {
-    const singles = searchPage.groups.filter((group) => group.totalReleases === 1);
-    if (singles.length === 0) return;
-
-    setExpandedGroups((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      for (const group of singles) {
-        if (!next[group.releaseGroupId]) {
-          next[group.releaseGroupId] = true;
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-
-    for (const group of singles) {
-      void loadReleasesForGroup(group.releaseGroupId, true);
-    }
-  }, [searchPage.groups, loadReleasesForGroup]);
-
-  const isFormatBucketChecked = useCallback(
-    (bucket: string) => formatFilters[bucket] ?? true,
-    [formatFilters],
-  );
-
   const isTypeBucketChecked = useCallback(
     (bucket: string) => typeFilters[bucket] ?? true,
     [typeFilters],
   );
 
   const groupMatchesFilters = useCallback(
-    (group: SearchResultGroup) =>
-      formatBucketsForGroup(group).some(isFormatBucketChecked) &&
-      isTypeBucketChecked(typeBucketForGroup(group)),
-    [isFormatBucketChecked, isTypeBucketChecked],
+    (group: SearchResultGroup) => isTypeBucketChecked(typeBucketForGroup(group)),
+    [isTypeBucketChecked],
   );
-
-  const releaseMatchesFilters = useCallback(
-    (format?: string) => isFormatBucketChecked(bucketForFormat(format ?? 'Unknown')),
-    [isFormatBucketChecked],
-  );
-
-  const sortedFormatBuckets = useMemo(() => {
-    return sortFormatBuckets(discoveredFormatBuckets);
-  }, [discoveredFormatBuckets]);
 
   const sortedTypeBuckets = useMemo(() => {
     return sortTypeBuckets(discoveredTypeBuckets);
@@ -502,7 +439,7 @@ export function DiscoverView() {
   const showGroupFilters =
     shouldApplyClientFilters &&
     !shouldShowEntityPicker &&
-    (sortedFormatBuckets.length > 0 || sortedTypeBuckets.length > 0);
+    sortedTypeBuckets.length > 0;
 
   const activeEntityPage = simpleTypeFromUrl === 'artist' ? artistEntityPage : labelEntityPage;
   const activeEntityCount = activeEntityPage.entities.length;
@@ -514,21 +451,12 @@ export function DiscoverView() {
     return searchPage.groups.filter(groupMatchesFilters);
   }, [searchPage.groups, groupMatchesFilters, shouldApplyClientFilters]);
 
-  const hasActiveFormatFilters = useMemo(() => {
-    if (!shouldApplyClientFilters) {
-      return false;
-    }
-    return sortedFormatBuckets.some((bucket) => !isFormatBucketChecked(bucket));
-  }, [sortedFormatBuckets, isFormatBucketChecked, shouldApplyClientFilters]);
-
-  const hasActiveTypeFilters = useMemo(() => {
+  const hasActiveClientFilters = useMemo(() => {
     if (!shouldApplyClientFilters) {
       return false;
     }
     return sortedTypeBuckets.some((bucket) => !isTypeBucketChecked(bucket));
   }, [sortedTypeBuckets, isTypeBucketChecked, shouldApplyClientFilters]);
-
-  const hasActiveClientFilters = hasActiveFormatFilters || hasActiveTypeFilters;
 
   const totalPages = Math.max(1, Math.ceil(searchPage.total / searchPage.pageSize));
 
@@ -653,12 +581,6 @@ export function DiscoverView() {
     [collectionReleaseGroupIds],
   );
 
-  const getFilteredReleases = (group: SearchResultGroup) => {
-    const detail = groupReleases[group.releaseGroupId];
-    if (!detail) return [];
-    return detail.releases.filter((release) => releaseMatchesFilters(release.format));
-  };
-
   const toggleGroupExpanded = async (group: SearchResultGroup) => {
     const isOpen = Boolean(expandedGroups[group.releaseGroupId]);
     const nextOpen = !isOpen;
@@ -709,16 +631,6 @@ export function DiscoverView() {
         <div className={`flex flex-wrap items-center gap-3 ${showGroupFilters ? 'justify-between' : 'justify-end'}`}>
           {showGroupFilters && (
             <div className="flex flex-wrap items-center gap-3">
-              {sortedFormatBuckets.length > 0 && (
-                <FilterDropdown
-                  label="Format"
-                  options={sortedFormatBuckets}
-                  isSelected={isFormatBucketChecked}
-                  onToggle={(bucket, checked) =>
-                    setFormatFilters((prev) => ({ ...prev, [bucket]: checked }))
-                  }
-                />
-              )}
               {sortedTypeBuckets.length > 0 && (
                 <FilterDropdown
                   label="Type"
@@ -889,7 +801,6 @@ export function DiscoverView() {
             void toggleGroupExpanded(group);
           }}
           onQuickAdd={handleQuickAdd}
-          getVisibleReleases={getFilteredReleases}
           showFormatBuckets
           isGroupOwned={isGroupOwned}
           isReleaseActionDisabled={isReleaseOwned}
@@ -904,7 +815,6 @@ export function DiscoverView() {
           onArtistNameClick={(artistName) => {
             void openArtistDetailFromCard(artistName);
           }}
-          emptyReleasesMessage="No releases in this group match the selected formats."
         />
       )}
 

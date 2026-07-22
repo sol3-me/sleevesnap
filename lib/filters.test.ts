@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   bucketForFormat,
-  formatBucketsForGroup,
   groupReleasesByFormatBucket,
   groupReleasesByFormatAndYear,
   loadStoredFilterState,
@@ -19,8 +18,6 @@ function makeGroup(overrides: Partial<SearchResultGroup> = {}): SearchResultGrou
     title: 'Test Album',
     artist: 'Test Artist',
     releaseGroupUrl: 'https://musicbrainz.org/release-group/group-1',
-    availableFormats: [],
-    totalReleases: 1,
     ...overrides,
   };
 }
@@ -44,11 +41,6 @@ test('bucketForFormat does not merge "2xCD" into "CD" (no word boundary before t
 test('bucketForFormat leaves unrecognised formats untouched', () => {
   assert.equal(bucketForFormat('Digital Media'), 'Digital Media');
   assert.equal(bucketForFormat('Cassette'), 'Cassette');
-});
-
-test('formatBucketsForGroup dedupes formats that merge into the same bucket', () => {
-  const group = makeGroup({ availableFormats: ['12" Vinyl', 'LP', 'CD-R', 'Digital Media'] });
-  assert.deepEqual(formatBucketsForGroup(group), ['Vinyl', 'CD', 'Digital Media']);
 });
 
 test('typeBucketForGroup passes MusicBrainz primaryType through directly', () => {
