@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { useAddToCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
 import { useSettingsQuery } from '../hooks/useSettings';
+import { getBrowserLocales, resolveEffectivePreferredRegion } from '../lib/detectRegionFromLocale';
 import { resolveArtistEntityByName } from '../lib/entityResolvers';
 import { pickRepresentativeRelease } from '../lib/filters';
 import { getReleaseGroupReleases, searchVinylReleaseGroups } from '../services/vinylService';
@@ -72,7 +73,10 @@ export function ArtistDetailView() {
   const addMutation = useAddToCollectionMutation();
   const { data: settings } = useSettingsQuery();
   const representativePreferences = useMemo(
-    () => ({ preferredFormat: settings.preferredFormat, preferredRegion: settings.preferredRegion }),
+    () => ({
+      preferredFormat: settings.preferredFormat,
+      preferredRegion: resolveEffectivePreferredRegion(settings.preferredRegion, getBrowserLocales()),
+    }),
     [settings.preferredFormat, settings.preferredRegion],
   );
 

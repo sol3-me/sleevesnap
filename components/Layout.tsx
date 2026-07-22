@@ -3,12 +3,16 @@ import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { ScanProvider } from '../contexts/ScanContext';
+import { useSettingsQuery } from '../hooks/useSettings';
 import { getProviderLabel } from '../lib/authProviderLabel';
+import { getBrowserLocales, resolveEffectivePreferredRegion } from '../lib/detectRegionFromLocale';
+import { getRegionFlagEmoji, getRegionLabel } from '../lib/regionLabel';
 import { Icons } from './Icons';
 
-/** Compact account row: avatar (or initial), name/email, sign-out. */
+/** Compact account row: avatar (or initial), name/email, region flag, sign-out. */
 function AccountSection() {
   const { user, signOut } = useAuth();
+  const { data: settings } = useSettingsQuery();
   if (!user) return null;
 
   const label = user.displayName ?? user.email ?? 'Signed in';
@@ -19,6 +23,7 @@ function AccountSection() {
   const secondaryLine = user.displayName && user.email
     ? providerLabel ? `${user.email} · ${providerLabel}` : user.email
     : providerLabel;
+  const effectiveRegion = resolveEffectivePreferredRegion(settings.preferredRegion, getBrowserLocales());
 
   return (
     <div className="px-3 pb-3">
@@ -41,6 +46,12 @@ function AccountSection() {
             <p className="text-[11px] text-gray-500 truncate">{secondaryLine}</p>
           )}
         </div>
+        <span
+          title={`Preferred region: ${getRegionLabel(effectiveRegion) ?? effectiveRegion}`}
+          className="shrink-0 text-base leading-none"
+        >
+          {getRegionFlagEmoji(effectiveRegion)}
+        </span>
         <Link
           to="/settings"
           title="Settings"
