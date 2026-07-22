@@ -63,18 +63,17 @@ export function listRegionOptions(): RegionOption[] {
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-const GLOBE_FALLBACK = '🌐';
-// Regional Indicator Symbol Letter 'A' — a real flag emoji is just two of
-// these, offset from 'A'/'B'/etc. by this base code point.
-const REGIONAL_INDICATOR_BASE = 0x1f1e6;
-
-/** Flag emoji for a real 2-letter region code; a globe for MusicBrainz's pseudo-codes (no real flag exists) or malformed input. */
-export function getRegionFlagEmoji(countryCode: string): string {
+/**
+ * Whether `countryCode` has a real flag icon to show — false for
+ * MusicBrainz's pseudo-regions (XW/XE/XG; there's no real "Worldwide" flag)
+ * and any malformed input. Unicode regional-indicator flag emoji don't
+ * reliably render as flags cross-platform (notably: Windows/many Chromium
+ * builds show the bare two letters instead), so actual rendering uses real
+ * flag icon images (see components/RegionFlag.tsx, backed by the
+ * `flag-icons` package) rather than emoji — this just answers "is there one
+ * to look up".
+ */
+export function hasRealFlagIcon(countryCode: string): boolean {
   const normalized = countryCode.toUpperCase();
-  if (SPECIAL_REGIONS[normalized] || !/^[A-Z]{2}$/.test(normalized)) {
-    return GLOBE_FALLBACK;
-  }
-
-  const codePoints = [...normalized].map((letter) => REGIONAL_INDICATOR_BASE + (letter.charCodeAt(0) - 65));
-  return String.fromCodePoint(...codePoints);
+  return !SPECIAL_REGIONS[normalized] && /^[A-Z]{2}$/.test(normalized);
 }

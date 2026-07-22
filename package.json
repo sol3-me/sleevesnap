@@ -36,6 +36,7 @@
 		"test:landing-demo": "tsx --test lib/landingDemo.test.ts",
 		"test:thumbnail": "tsx --test server/services/thumbnail.test.ts",
 		"warm:landing": "tsx server/scripts/warmLandingPool.ts",
+		"postinstall": "node scripts/copyFlagIcons.mjs",
 		"dev:emulators": "firebase emulators:start --only auth --project sleevesnap --import=./.firebase-emulator-data --export-on-exit=./.firebase-emulator-data",
 		"preview": "vite preview",
 		"start": "node dist-server/index.js"
@@ -65,6 +66,7 @@
 		"@types/node": "^22.14.0",
 		"@vitejs/plugin-react": "^5.0.0",
 		"firebase-tools": "^15.24.0",
+		"flag-icons": "^7.5.0",
 		"tsx": "^4.21.0",
 		"typescript": "~5.8.2",
 		"vite": "^6.2.0"

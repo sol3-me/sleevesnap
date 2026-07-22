@@ -16,6 +16,9 @@ dist-server
 # Runtime data / SQLite DB
 data/
 
+# Generated from node_modules/flag-icons by scripts/copyFlagIcons.mjs (postinstall)
+public/flags/
+
 # Seeded Firebase Auth Emulator data (npm run dev:emulators)
 .firebase-emulator-data/
 
