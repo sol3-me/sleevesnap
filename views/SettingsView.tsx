@@ -8,6 +8,7 @@ import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSetting
 import { getProviderLabel } from '../lib/authProviderLabel';
 import { serializeCollectionExport } from '../lib/collectionExport';
 import { parseCollectionImport } from '../lib/collectionImport';
+import { getBrowserLocales, resolveEffectivePreferredRegion } from '../lib/detectRegionFromLocale';
 import { triggerTextDownload } from '../lib/downloadFile';
 import { FORMAT_FAMILY_OPTIONS } from '../lib/filters';
 import { listRegionOptions } from '../lib/regionLabel';
@@ -19,6 +20,19 @@ function PreferencesSection() {
   const { data: settings } = useSettingsQuery();
   const updateSettingsMutation = useUpdateSettingsMutation();
   const regionOptions = useMemo(() => listRegionOptions(), []);
+  // Guessed from the browser's own locale (never saved until the user
+  // actually touches the select) so the field isn't just sitting on "No
+  // preference" for someone who'd obviously want their own region.
+  const guessedRegion = useMemo(() => resolveEffectivePreferredRegion(null, getBrowserLocales()), []);
+  // Without this, explicitly picking "No preference" would immediately snap
+  // back to the guess: preferredRegion becomes null either way (unset or
+  // deliberately cleared look identical server-side), so the guess would
+  // keep reapplying on every render. Once the user has touched the select
+  // this session, respect whatever they chose — including "No preference" —
+  // instead of re-guessing.
+  const [regionTouched, setRegionTouched] = useState(false);
+  const isGuessedRegion = !settings.preferredRegion && !regionTouched;
+  const regionSelectValue = regionTouched ? settings.preferredRegion ?? '' : settings.preferredRegion ?? guessedRegion;
 
   return (
     <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 mb-4">
@@ -48,10 +62,11 @@ function PreferencesSection() {
         <label className="block">
           <span className="block text-xs font-medium text-gray-500 mb-1.5">Preferred region</span>
           <select
-            value={settings.preferredRegion ?? ''}
-            onChange={(e) =>
-              updateSettingsMutation.mutate({ preferredRegion: e.target.value || null })
-            }
+            value={regionSelectValue}
+            onChange={(e) => {
+              setRegionTouched(true);
+              updateSettingsMutation.mutate({ preferredRegion: e.target.value || null });
+            }}
             className={selectClassName}
           >
             <option value="">No preference</option>
@@ -61,6 +76,11 @@ function PreferencesSection() {
               </option>
             ))}
           </select>
+          {isGuessedRegion && (
+            <span className="block text-[11px] text-gray-500 mt-1.5">
+              Guessed from your browser — change it if this isn't right.
+            </span>
+          )}
         </label>
       </div>
     </section>
