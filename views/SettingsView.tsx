@@ -1,13 +1,71 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icons } from '../components/Icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useClearCollectionMutation, useCollectionQuery, useImportCollectionMutation } from '../hooks/useCollection';
+import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettings';
 import { getProviderLabel } from '../lib/authProviderLabel';
 import { serializeCollectionExport } from '../lib/collectionExport';
 import { parseCollectionImport } from '../lib/collectionImport';
 import { triggerTextDownload } from '../lib/downloadFile';
+import { FORMAT_FAMILY_OPTIONS } from '../lib/filters';
+import { listRegionOptions } from '../lib/regionLabel';
+
+const selectClassName =
+  'w-full bg-vinyl-800/80 text-white border border-white/10 rounded-xl px-3 py-2.5 text-sm focus:border-vinyl-accent/60 focus:ring-2 focus:ring-vinyl-accent/20 focus:outline-none transition-colors';
+
+function PreferencesSection() {
+  const { data: settings } = useSettingsQuery();
+  const updateSettingsMutation = useUpdateSettingsMutation();
+  const regionOptions = useMemo(() => listRegionOptions(), []);
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 mb-4">
+      <h3 className="text-sm font-semibold text-white mb-1">Collection defaults</h3>
+      <p className="text-sm text-gray-400 mb-4">
+        Used to pick a pressing automatically when you add an album without choosing a specific edition
+        (e.g. quick-add). Falls back to the usual default when an album has no pressing matching your preference.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <label className="block">
+          <span className="block text-xs font-medium text-gray-500 mb-1.5">Preferred format</span>
+          <select
+            value={settings.preferredFormat ?? ''}
+            onChange={(e) =>
+              updateSettingsMutation.mutate({ preferredFormat: e.target.value || null })
+            }
+            className={selectClassName}
+          >
+            <option value="">No preference</option>
+            {FORMAT_FAMILY_OPTIONS.map((format) => (
+              <option key={format} value={format}>
+                {format}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="block text-xs font-medium text-gray-500 mb-1.5">Preferred region</span>
+          <select
+            value={settings.preferredRegion ?? ''}
+            onChange={(e) =>
+              updateSettingsMutation.mutate({ preferredRegion: e.target.value || null })
+            }
+            className={selectClassName}
+          >
+            <option value="">No preference</option>
+            {regionOptions.map((region) => (
+              <option key={region.code} value={region.code}>
+                {region.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </section>
+  );
+}
 
 function AccountInfoSection() {
   const { user } = useAuth();
@@ -132,6 +190,8 @@ export function SettingsView() {
       <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-6 md:mb-8">Settings</h2>
 
       <AccountInfoSection />
+
+      <PreferencesSection />
 
       <DataSection />
 
