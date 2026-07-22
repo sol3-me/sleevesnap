@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { useAddToCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
+import { useSettingsQuery } from '../hooks/useSettings';
 import { resolveArtistEntityByName } from '../lib/entityResolvers';
 import { pickRepresentativeRelease } from '../lib/filters';
 import { getReleaseGroupReleases, searchVinylReleaseGroups } from '../services/vinylService';
@@ -69,6 +70,11 @@ export function ArtistDetailView() {
   const navigate = routeApi.useNavigate();
   const { data: collection } = useCollectionQuery();
   const addMutation = useAddToCollectionMutation();
+  const { data: settings } = useSettingsQuery();
+  const representativePreferences = useMemo(
+    () => ({ preferredFormat: settings.preferredFormat, preferredRegion: settings.preferredRegion }),
+    [settings.preferredFormat, settings.preferredRegion],
+  );
 
   const artistName = search.name?.trim() || 'Unknown Artist';
 
@@ -326,7 +332,7 @@ export function ArtistDetailView() {
         toast.error(`Couldn't load releases for "${group.title}". Please try again.`);
         return;
       }
-      await handleAddToCollection(pickRepresentativeRelease(releases));
+      await handleAddToCollection(pickRepresentativeRelease(releases, representativePreferences));
     } catch {
       toast.error(`Couldn't load releases for "${group.title}". Please try again.`);
     }
@@ -426,6 +432,7 @@ export function ArtistDetailView() {
               void toggleGroupExpanded(group.releaseGroupId);
             }}
             onQuickAdd={handleQuickAdd}
+            preferences={representativePreferences}
             isGroupOwned={(releaseGroupId) => collectionReleaseGroupIds.has(releaseGroupId)}
             isReleaseActionDisabled={isReleaseOwned}
             getReleaseActionLabel={(_, disabled) => (disabled ? 'In Collection' : 'Add to Collection')}
