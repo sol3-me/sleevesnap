@@ -2,7 +2,40 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icons } from '../components/Icons';
+import { useAuth } from '../contexts/AuthContext';
 import { useClearCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
+import { getProviderLabel } from '../lib/authProviderLabel';
+
+function AccountInfoSection() {
+  const { user } = useAuth();
+  if (!user) return null;
+
+  const label = user.displayName ?? user.email ?? 'Signed in';
+  const initial = label.charAt(0).toUpperCase();
+  const providerLabel = getProviderLabel(user);
+  const secondaryLine = user.displayName && user.email
+    ? providerLabel ? `${user.email} · ${providerLabel}` : user.email
+    : providerLabel;
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 mb-4">
+      <h3 className="text-sm font-semibold text-white mb-4">Account</h3>
+      <div className="flex items-center gap-3">
+        {user.photoURL ? (
+          <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-12 h-12 rounded-full shrink-0" />
+        ) : (
+          <span className="flex items-center justify-center w-12 h-12 rounded-full shrink-0 bg-vinyl-accent/20 text-vinyl-accent text-lg font-semibold">
+            {initial}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-white truncate">{label}</p>
+          {secondaryLine && <p className="text-xs text-gray-500 truncate">{secondaryLine}</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export function SettingsView() {
   const { data: collection } = useCollectionQuery();
@@ -22,6 +55,8 @@ export function SettingsView() {
   return (
     <div className="p-4 md:p-8 pb-28 md:pb-24 max-w-2xl">
       <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-6 md:mb-8">Settings</h2>
+
+      <AccountInfoSection />
 
       <section className="rounded-2xl border border-red-500/20 bg-red-500/5 p-5">
         <h3 className="text-sm font-semibold text-red-400 mb-1">Danger Zone</h3>
