@@ -151,7 +151,7 @@ export function CollectionView() {
         <div
           role="group"
           aria-label="Collection card size"
-          className="hidden md:flex items-center gap-1 px-1.5 py-1 rounded-full border border-white/10 bg-white/5"
+          className="flex items-center gap-1 px-1.5 py-1 rounded-full border border-white/10 bg-white/5"
         >
           {COLLECTION_CARD_SIZE_PRESETS.map((preset) => (
             <button
@@ -200,7 +200,10 @@ export function CollectionView() {
           className="grid gap-3 md:gap-5"
           style={
             isMobileLayout
-              ? { gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))' }
+              // 1fr (not a fixed max like desktop) so columns stretch to fill
+              // the narrow viewport evenly instead of leaving a ragged gap —
+              // collectionCardSize still sets how many columns fit per row.
+              ? { gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, 1fr))` }
               : {
                 gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
                 justifyContent: 'flex-start',
