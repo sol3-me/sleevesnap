@@ -65,8 +65,10 @@ export function initDb(): void {
     );
 
     CREATE TABLE IF NOT EXISTS user_settings (
-      user_id     TEXT PRIMARY KEY,
-      card_size   TEXT NOT NULL DEFAULT 'M'
+      user_id          TEXT PRIMARY KEY,
+      card_size        TEXT NOT NULL DEFAULT 'M',
+      preferred_format TEXT,
+      preferred_region TEXT
     );
 
     CREATE TABLE IF NOT EXISTS scan_history (
@@ -117,6 +119,16 @@ export function initDb(): void {
     db.exec('ALTER TABLE cover_cache ADD COLUMN thumb_url TEXT');
     console.log('[db] Added thumb_url column to cover_cache');
   }
+
+  const userSettingsCols = db.pragma('table_info(user_settings)') as Array<{ name: string }>;
+  const addUserSettingsColumnIfMissing = (columnName: string, columnType: string) => {
+    if (!userSettingsCols.some((c) => c.name === columnName)) {
+      db.exec(`ALTER TABLE user_settings ADD COLUMN ${columnName} ${columnType}`);
+      console.log(`[db] Added ${columnName} column to user_settings`);
+    }
+  };
+  addUserSettingsColumnIfMissing('preferred_format', 'TEXT');
+  addUserSettingsColumnIfMissing('preferred_region', 'TEXT');
 
   console.log('[db] Database initialised at', DB_PATH);
 }
