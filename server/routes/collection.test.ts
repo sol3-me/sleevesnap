@@ -335,3 +335,92 @@ test('requests without a token are rejected before touching the collection', asy
     await closeServer(server);
   }
 });
+
+// --- Bulk import ---------------------------------------------------------
+
+test('POST /api/collection/import adds every new record in one request', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const res = await requestJson(port, '/api/collection/import', 'POST', 'token-a', {
+      records: [
+        { id: 'import-1', artist: 'Boards of Canada', title: 'Geogaddi', musicBrainzId: 'mbid-geogaddi', dateAdded: Date.now() },
+        { id: 'import-2', artist: 'Aphex Twin', title: 'Selected Ambient Works 85-92', musicBrainzId: 'mbid-saw', dateAdded: Date.now() },
+      ],
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json.added, 2);
+    assert.equal(res.json.duplicates, 0);
+
+    const asA = await requestJson(port, '/api/collection', 'GET', 'token-a');
+    assert.ok(asA.json.some((r: any) => r.id === 'import-1'));
+    assert.ok(asA.json.some((r: any) => r.id === 'import-2'));
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('POST /api/collection/import skips duplicates and still adds the rest', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    await requestJson(port, '/api/collection', 'POST', 'token-a', {
+      id: 'existing',
+      artist: 'Rihanna',
+      title: 'Rated R',
+      musicBrainzId: 'mbid-rihanna-rated-r',
+      dateAdded: Date.now(),
+    });
+
+    const res = await requestJson(port, '/api/collection/import', 'POST', 'token-a', {
+      records: [
+        { id: 'dupe-of-existing', artist: 'Rihanna', title: 'Rated R', musicBrainzId: 'mbid-rihanna-rated-r', dateAdded: Date.now() },
+        { id: 'import-new', artist: 'Portishead', title: 'Dummy', musicBrainzId: 'mbid-dummy', dateAdded: Date.now() },
+      ],
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json.added, 1);
+    assert.equal(res.json.duplicates, 1);
+
+    const asA = await requestJson(port, '/api/collection', 'GET', 'token-a');
+    assert.ok(
+      asA.json.some((r: any) => r.id === 'import-new'),
+      'the genuinely new import must be added',
+    );
+    assert.ok(
+      !asA.json.some((r: any) => r.id === 'dupe-of-existing'),
+      'the duplicate entry must not be inserted under its import id',
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('POST /api/collection/import is scoped to the authenticated user', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    await requestJson(port, '/api/collection/import', 'POST', 'token-a', {
+      records: [{ id: 'a-only', artist: 'Slowdive', title: 'Souvlaki', musicBrainzId: 'mbid-souvlaki', dateAdded: Date.now() }],
+    });
+
+    const asB = await requestJson(port, '/api/collection', 'GET', 'token-b');
+    assert.ok(
+      !asB.json.some((r: any) => r.id === 'a-only'),
+      "user A's import must not appear in user B's collection",
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('POST /api/collection/import requires auth', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const res = await requestJson(port, '/api/collection/import', 'POST', undefined, { records: [] });
+    assert.equal(res.statusCode, 401);
+  } finally {
+    await closeServer(server);
+  }
+});

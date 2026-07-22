@@ -1,7 +1,9 @@
 import { ReactElement, ReactNode, useEffect, useState } from 'react';
-import { groupReleasesByFormatAndYear, groupReleasesByFormatBucket } from '../lib/filters';
+import { classifyFormatFamily, groupReleasesByFormatAndYear, groupReleasesByFormatBucket, RepresentativePreferences } from '../lib/filters';
+import { getRegionLabel } from '../lib/regionLabel';
 import { SearchGroupReleases, SearchRelease, SearchResultGroup } from '../types';
 import { Icons } from './Icons';
+import { RegionFlag } from './RegionFlag';
 
 interface ReleaseGroupResultsListProps {
     groups: SearchResultGroup[];
@@ -23,44 +25,26 @@ interface ReleaseGroupResultsListProps {
     showFormatBuckets?: boolean;
     /** Shows the grouped edition count once a group has been expanded. Pre-expand, only date + type are known. */
     showReleaseCount?: boolean;
+    /** User's preferred format/region, if set — changes which pressing is picked as the default representative within a variant group. */
+    preferences?: RepresentativePreferences;
     onArtistNameClick?: (artistName: string) => void | Promise<void>;
     labelContext?: { id?: string; name: string };
     onLabelNameClick?: (labelName: string, labelId?: string) => void | Promise<void>;
 }
 
-function formatCountry(countryCode?: string) {
-    if (!countryCode) return undefined;
-    const specialRegions: Record<string, string> = {
-        XE: 'Europe',
-        XW: 'Worldwide',
-        XG: 'East Germany',
-    };
-
-    if (specialRegions[countryCode]) {
-        return `${specialRegions[countryCode]} (${countryCode})`;
-    }
-
-    try {
-        const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode);
-        if (name && name !== countryCode) {
-            return `${name} (${countryCode})`;
-        }
-    } catch {
-        // Ignore and fall through to raw region code.
-    }
-
-    return countryCode;
-}
+const formatCountry = getRegionLabel;
 
 /** Icon for a format bucket/string — returns undefined (no icon) for anything unrecognised. */
 function getFormatIcon(format: string): (() => ReactElement) | undefined {
-    const normalized = format.toLowerCase();
-    if (normalized.includes('vinyl') || normalized === 'lp') return Icons.FormatVinyl;
-    if (normalized.includes('cd')) return Icons.FormatCD;
-    if (normalized.includes('cassette') || normalized.includes('tape')) return Icons.FormatCassette;
-    if (normalized.includes('digital')) return Icons.FormatDigital;
-    if (normalized.includes('dvd') || normalized.includes('blu-ray') || normalized.includes('video')) return Icons.FormatVideo;
-    return undefined;
+    const family = classifyFormatFamily(format);
+    switch (family) {
+        case 'Vinyl': return Icons.FormatVinyl;
+        case 'CD': return Icons.FormatCD;
+        case 'Cassette': return Icons.FormatCassette;
+        case 'Digital Media': return Icons.FormatDigital;
+        case 'DVD/Blu-ray': return Icons.FormatVideo;
+        default: return undefined;
+    }
 }
 
 export function ReleaseGroupResultsList({
@@ -81,6 +65,7 @@ export function ReleaseGroupResultsList({
     compact = false,
     showFormatBuckets = false,
     showReleaseCount = true,
+    preferences,
     onArtistNameClick,
     labelContext,
     onLabelNameClick,
@@ -159,7 +144,18 @@ export function ReleaseGroupResultsList({
     // Used both for a variant group's representative pressing and for the
     // single-release case (a group with no other regions to collapse).
     const renderReleaseCard = (record: SearchRelease, groupThumbnailUrl: SearchResultGroup['thumbnailUrl'], extraContent?: ReactNode) => {
-        const country = formatCountry(record.country);
+        const metaParts: ReactNode[] = [
+            record.year,
+            record.country && (
+                <span key="country" className="inline-flex items-center gap-1">
+                    <RegionFlag code={record.country} className="w-3 h-2.5 shrink-0" />
+                    {formatCountry(record.country)}
+                </span>
+            ),
+            record.format,
+            record.releaseStatus,
+            record.genre,
+        ].filter(Boolean);
 
         return (
             <div className={`flex ${compact ? 'bg-vinyl-950/70 rounded-lg p-2.5' : 'bg-vinyl-900/70 rounded-xl p-3'} border border-white/5 gap-3`}>
@@ -203,9 +199,14 @@ export function ReleaseGroupResultsList({
                             </p>
                         )}
                         <p className="text-xs text-gray-500 mt-1 truncate">
-                            {[record.year, country, record.format, record.releaseStatus, record.genre]
-                                .filter(Boolean)
-                                .join(' • ') || 'Metadata unavailable'}
+                            {metaParts.length > 0
+                                ? metaParts.map((part, i) => (
+                                      <span key={i}>
+                                          {i > 0 && ' • '}
+                                          {part}
+                                      </span>
+                                  ))
+                                : 'Metadata unavailable'}
                         </p>
                         {record.musicBrainzId && (
                             <p className="text-xs text-gray-500 truncate">
@@ -232,13 +233,26 @@ export function ReleaseGroupResultsList({
     // status/edition, and MBID, no repeated cover thumbnail (the whole point
     // of collapsing is to stop repeating near-identical visual weight).
     const renderRegionRow = (record: SearchRelease) => {
-        const country = formatCountry(record.country) ?? 'Unknown region';
+        const countryPart: ReactNode = record.country ? (
+            <span className="inline-flex items-center gap-1">
+                <RegionFlag code={record.country} className="w-3 h-2.5 shrink-0" />
+                {formatCountry(record.country)}
+            </span>
+        ) : (
+            'Unknown region'
+        );
+        const metaParts: ReactNode[] = [countryPart, record.releaseStatus, record.edition].filter(Boolean);
 
         return (
             <div className={`flex items-center justify-between gap-3 ${compact ? 'bg-vinyl-950/50 p-2' : 'bg-vinyl-950/50 p-2.5'} rounded-lg border border-white/5`}>
                 <div className="min-w-0 flex-1">
                     <p className="text-xs text-gray-300 truncate">
-                        {[country, record.releaseStatus, record.edition].filter(Boolean).join(' • ')}
+                        {metaParts.map((part, i) => (
+                            <span key={i}>
+                                {i > 0 && ' • '}
+                                {part}
+                            </span>
+                        ))}
                     </p>
                     {record.musicBrainzId && (
                         <a
@@ -450,7 +464,7 @@ export function ReleaseGroupResultsList({
                                             </h5>
                                         )}
                                         <div className="space-y-3">
-                                            {groupReleasesByFormatAndYear(bucketReleases).map((variant) => {
+                                            {groupReleasesByFormatAndYear(bucketReleases, preferences).map((variant) => {
                                                 const variantKey = `${group.releaseGroupId}::${bucket}::${variant.format}::${variant.year}`;
                                                 const hasMultipleRegions = variant.releases.length > 1;
                                                 const isVariantExpanded = Boolean(expandedVariants[variantKey]);
@@ -470,9 +484,35 @@ export function ReleaseGroupResultsList({
                                                     </button>
                                                 ) : undefined;
 
+                                                // The collapsed card only shows the representative pressing's own
+                                                // owned state (via its action button) — if a *different* region in
+                                                // this same variant is the one actually owned, that's otherwise
+                                                // invisible until the user expands "Show all N regions". No extra
+                                                // fetch needed: variant.releases is already loaded for the toggle above.
+                                                const ownedElsewhere =
+                                                    !isVariantExpanded &&
+                                                    isReleaseActionDisabled &&
+                                                    !isReleaseActionDisabled(variant.representative) &&
+                                                    variant.releases.some(
+                                                        (record) => record.id !== variant.representative.id && isReleaseActionDisabled(record),
+                                                    );
+
+                                                const cardExtraContent = (
+                                                    <>
+                                                        {ownedElsewhere && (
+                                                            <p className="mt-1.5">
+                                                                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-green-400 bg-green-500/10 border border-green-500/20 rounded-full px-2 py-0.5">
+                                                                    <Icons.Check /> Owned — different region
+                                                                </span>
+                                                            </p>
+                                                        )}
+                                                        {regionToggle}
+                                                    </>
+                                                );
+
                                                 return (
                                                     <div key={variantKey}>
-                                                        {renderReleaseCard(variant.representative, group.thumbnailUrl, regionToggle)}
+                                                        {renderReleaseCard(variant.representative, group.thumbnailUrl, cardExtraContent)}
                                                         {hasMultipleRegions && isVariantExpanded && (
                                                             <div className="mt-2 ml-4 pl-3 border-l-2 border-white/10 space-y-2">
                                                                 {variant.releases.map((record) => (

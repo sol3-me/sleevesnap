@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   bucketForFormat,
+  classifyFormatFamily,
   groupReleasesByFormatBucket,
   groupReleasesByFormatAndYear,
   loadStoredFilterState,
+  pickRepresentativeRelease,
   sortBucketsWithPriority,
   sortFormatBuckets,
   sortTypeBuckets,
@@ -189,6 +191,130 @@ test('groupReleasesByFormatAndYear preserves first-appearance order of variant g
     grouped.map((g) => g.year),
     ['2011', '1988'],
   );
+});
+
+// --- classifyFormatFamily ----------------------------------------------
+// Generalizes the same substring patterns ReleaseGroupResultsList's
+// getFormatIcon already used for icon selection, so "which format family is
+// this" has one source of truth shared by icon lookup and preference
+// matching (see pickRepresentativeRelease below).
+
+test('classifyFormatFamily recognises Vinyl variants', () => {
+  assert.equal(classifyFormatFamily('12" Vinyl'), 'Vinyl');
+  assert.equal(classifyFormatFamily('LP'), 'Vinyl');
+  assert.equal(classifyFormatFamily('7" Vinyl'), 'Vinyl');
+});
+
+test('classifyFormatFamily recognises CD variants', () => {
+  assert.equal(classifyFormatFamily('CD'), 'CD');
+  assert.equal(classifyFormatFamily('2xCD'), 'CD');
+});
+
+test('classifyFormatFamily recognises Cassette variants', () => {
+  assert.equal(classifyFormatFamily('Cassette'), 'Cassette');
+  assert.equal(classifyFormatFamily('Tape'), 'Cassette');
+});
+
+test('classifyFormatFamily recognises Digital Media', () => {
+  assert.equal(classifyFormatFamily('Digital Media'), 'Digital Media');
+});
+
+test('classifyFormatFamily recognises DVD/Blu-ray variants', () => {
+  assert.equal(classifyFormatFamily('DVD-Video'), 'DVD/Blu-ray');
+  assert.equal(classifyFormatFamily('Blu-ray'), 'DVD/Blu-ray');
+});
+
+test('classifyFormatFamily falls back to "Other" for unrecognised or missing formats', () => {
+  assert.equal(classifyFormatFamily('8-Track Cartridge'), 'Other');
+  assert.equal(classifyFormatFamily(undefined), 'Other');
+});
+
+// --- pickRepresentativeRelease with preferences -------------------------
+
+interface PreferenceTestRelease {
+  id: string;
+  format?: string;
+  country?: string;
+  releaseDate?: string;
+}
+
+test('pickRepresentativeRelease with no preferences behaves exactly as before (Worldwide > earliest date > first)', () => {
+  const releases: PreferenceTestRelease[] = [
+    { id: 'us', format: 'CD', country: 'US', releaseDate: '2005-01-01' },
+    { id: 'xw', format: 'CD', country: 'XW', releaseDate: '2005-06-01' },
+  ];
+  assert.equal(pickRepresentativeRelease(releases).id, 'xw');
+});
+
+test('pickRepresentativeRelease prefers a release matching preferredFormat over one that does not', () => {
+  const releases: PreferenceTestRelease[] = [
+    { id: 'cd-worldwide', format: 'CD', country: 'XW' },
+    { id: 'vinyl-us', format: '12" Vinyl', country: 'US' },
+  ];
+  const result = pickRepresentativeRelease(releases, { preferredFormat: 'Vinyl' });
+  assert.equal(result.id, 'vinyl-us');
+});
+
+test('pickRepresentativeRelease falls back to all releases when none match preferredFormat', () => {
+  const releases: PreferenceTestRelease[] = [
+    { id: 'cd-worldwide', format: 'CD', country: 'XW' },
+    { id: 'cd-us', format: 'CD', country: 'US' },
+  ];
+  const result = pickRepresentativeRelease(releases, { preferredFormat: 'Cassette' });
+  assert.equal(result.id, 'cd-worldwide', 'no Cassette exists for this group, so the usual default applies');
+});
+
+test('pickRepresentativeRelease prefers a release matching preferredRegion over the Worldwide default', () => {
+  const releases: PreferenceTestRelease[] = [
+    { id: 'xw', format: 'CD', country: 'XW' },
+    { id: 'jp', format: 'CD', country: 'JP' },
+  ];
+  const result = pickRepresentativeRelease(releases, { preferredRegion: 'JP' });
+  assert.equal(result.id, 'jp');
+});
+
+test('pickRepresentativeRelease falls back to the default priority when preferredRegion has no match', () => {
+  const releases: PreferenceTestRelease[] = [
+    { id: 'xw', format: 'CD', country: 'XW' },
+    { id: 'us', format: 'CD', country: 'US' },
+  ];
+  const result = pickRepresentativeRelease(releases, { preferredRegion: 'JP' });
+  assert.equal(result.id, 'xw', 'no JP pressing exists, so the usual Worldwide default applies');
+});
+
+test('pickRepresentativeRelease applies preferredFormat first, then preferredRegion within that format', () => {
+  const releases: PreferenceTestRelease[] = [
+    { id: 'cd-jp', format: 'CD', country: 'JP' },
+    { id: 'vinyl-us', format: '12" Vinyl', country: 'US' },
+    { id: 'vinyl-jp', format: '12" Vinyl', country: 'JP' },
+  ];
+  const result = pickRepresentativeRelease(releases, { preferredFormat: 'Vinyl', preferredRegion: 'JP' });
+  assert.equal(result.id, 'vinyl-jp');
+});
+
+test('pickRepresentativeRelease keeps the preferredFormat filter even when preferredRegion has no match within it', () => {
+  const releases: PreferenceTestRelease[] = [
+    { id: 'cd-jp', format: 'CD', country: 'JP' },
+    { id: 'vinyl-us', format: '12" Vinyl', country: 'US' },
+    { id: 'vinyl-xw', format: '12" Vinyl', country: 'XW' },
+  ];
+  const result = pickRepresentativeRelease(releases, { preferredFormat: 'Vinyl', preferredRegion: 'JP' });
+  assert.equal(
+    result.id,
+    'vinyl-xw',
+    'no Vinyl+JP pressing exists, so it stays within Vinyl and falls back to the Worldwide default',
+  );
+});
+
+// --- groupReleasesByFormatAndYear with preferences -----------------------
+
+test('groupReleasesByFormatAndYear picks the preferredRegion release as representative when present in the group', () => {
+  const releases: TestRelease[] = [
+    { id: 'xw', format: 'CD', year: '2005', country: 'XW' },
+    { id: 'jp', format: 'CD', year: '2005', country: 'JP' },
+  ];
+  const [group] = groupReleasesByFormatAndYear(releases, { preferredRegion: 'JP' });
+  assert.equal(group.representative.id, 'jp');
 });
 
 test('loadStoredFilterState returns {} when window is undefined (SSR/test guard)', () => {

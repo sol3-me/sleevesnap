@@ -1,26 +1,19 @@
 import { Link, Outlet, useLocation } from '@tanstack/react-router';
-import type { User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { ScanProvider } from '../contexts/ScanContext';
+import { useSettingsQuery } from '../hooks/useSettings';
+import { getProviderLabel } from '../lib/authProviderLabel';
+import { getBrowserLocales, resolveEffectivePreferredRegion } from '../lib/detectRegionFromLocale';
+import { getRegionLabel } from '../lib/regionLabel';
 import { Icons } from './Icons';
+import { RegionFlag } from './RegionFlag';
 
-const providerLabels: Record<string, string> = {
-  'google.com': 'Google',
-  'github.com': 'GitHub',
-  password: 'Email',
-};
-
-/** Friendly label for the sign-in method behind this account, e.g. "Google". */
-function getProviderLabel(user: User): string | null {
-  const providerId = user.providerData[0]?.providerId;
-  return providerId ? providerLabels[providerId] ?? null : null;
-}
-
-/** Compact account row: avatar (or initial), name/email, sign-out. */
+/** Compact account row: avatar (badged with the region flag), name/email, sign-out. */
 function AccountSection() {
   const { user, signOut } = useAuth();
+  const { data: settings } = useSettingsQuery();
   if (!user) return null;
 
   const label = user.displayName ?? user.email ?? 'Signed in';
@@ -31,22 +24,32 @@ function AccountSection() {
   const secondaryLine = user.displayName && user.email
     ? providerLabel ? `${user.email} · ${providerLabel}` : user.email
     : providerLabel;
+  const effectiveRegion = resolveEffectivePreferredRegion(settings.preferredRegion, getBrowserLocales());
 
   return (
     <div className="px-3 pb-3">
       <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl bg-white/[0.03] border border-white/5">
-        {user.photoURL ? (
-          <img
-            src={user.photoURL}
-            alt=""
-            referrerPolicy="no-referrer"
-            className="w-8 h-8 rounded-full shrink-0"
+        <div
+          className="relative shrink-0"
+          title={`Preferred region: ${getRegionLabel(effectiveRegion) ?? effectiveRegion}`}
+        >
+          {user.photoURL ? (
+            <img
+              src={user.photoURL}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="w-8 h-8 rounded-full"
+            />
+          ) : (
+            <span className="flex items-center justify-center w-8 h-8 rounded-full bg-vinyl-accent/20 text-vinyl-accent text-sm font-semibold">
+              {initial}
+            </span>
+          )}
+          <RegionFlag
+            code={effectiveRegion}
+            className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-vinyl-950 text-[8px] leading-none"
           />
-        ) : (
-          <span className="flex items-center justify-center w-8 h-8 rounded-full shrink-0 bg-vinyl-accent/20 text-vinyl-accent text-sm font-semibold">
-            {initial}
-          </span>
-        )}
+        </div>
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium text-white truncate">{label}</p>
           {secondaryLine && (

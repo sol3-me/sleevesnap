@@ -180,6 +180,80 @@ collectionRouter.post('/', (req, res) => {
   res.status(201).json({ success: true });
 });
 
+// POST /api/collection/import – bulk-insert an exported collection in one
+// request. Client-side looping N individual POSTs would blow through
+// apiLimiter's 100 req/min cap for any real collector's backup, so this
+// applies the same dedup rule as the single-record POST above but in a
+// single transaction. pHash computation is intentionally skipped here (see
+// computeAndStorePHash) — firing a cover-art fetch per imported record would
+// turn a large import into its own request storm.
+collectionRouter.post('/import', (req, res) => {
+  const uid = requireUid(req, res);
+  if (!uid) return;
+
+  const { records } = req.body;
+  if (!Array.isArray(records)) {
+    res.status(400).json({ error: 'records must be an array' });
+    return;
+  }
+
+  const findExisting = db.prepare(
+    'SELECT id FROM collection WHERE user_id = ? AND musicbrainz_id = ?',
+  );
+  const findExistingByTitle = db.prepare(
+    'SELECT id FROM collection WHERE user_id = ? AND lower(artist) = lower(?) AND lower(title) = lower(?) AND musicbrainz_id IS NULL',
+  );
+  const insert = db.prepare(
+    `INSERT INTO collection (
+      id, artist, title, year, release_date, genre, format, country,
+      release_status, edition, musicbrainz_id, release_group_id,
+      release_group_title, release_group_url, release_url, discogs_url,
+      thumbnail_url, cover_url, date_added, notes, user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  const importAll = db.transaction((entries: typeof records) => {
+    let added = 0;
+    let duplicates = 0;
+
+    for (const entry of entries) {
+      const {
+        id, artist, title, year, releaseDate, genre, format, country,
+        releaseStatus, edition, musicBrainzId, releaseGroupId,
+        releaseGroupTitle, releaseGroupUrl, releaseUrl, discogsUrl,
+        thumbnailUrl, coverUrl, dateAdded, notes,
+      } = entry ?? {};
+
+      if (!id || !artist || !title) {
+        continue;
+      }
+
+      const existing = musicBrainzId
+        ? findExisting.get(uid, musicBrainzId)
+        : findExistingByTitle.get(uid, artist, title);
+
+      if (existing) {
+        duplicates += 1;
+        continue;
+      }
+
+      insert.run(
+        id, artist, title, year ?? null, releaseDate ?? null, genre ?? null,
+        format ?? null, country ?? null, releaseStatus ?? null, edition ?? null,
+        musicBrainzId ?? null, releaseGroupId ?? null, releaseGroupTitle ?? null,
+        releaseGroupUrl ?? null, releaseUrl ?? null, discogsUrl ?? null,
+        thumbnailUrl ?? null, coverUrl ?? null, dateAdded ?? Date.now(), notes ?? null,
+        uid,
+      );
+      added += 1;
+    }
+
+    return { added, duplicates };
+  });
+
+  res.json(importAll(records));
+});
+
 // DELETE /api/collection – clear the entire collection for this user
 collectionRouter.delete('/', (req, res) => {
   const uid = requireUid(req, res);

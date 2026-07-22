@@ -7,6 +7,7 @@ import { initDb } from './db.js';
 import { createAuthMiddleware } from './auth.js';
 import { createFirebaseVerifier } from './firebaseVerifier.js';
 import { collectionRouter } from './routes/collection.js';
+import { settingsRouter } from './routes/settings.js';
 import { scanRouter } from './routes/scan.js';
 import { searchRouter } from './routes/search.js';
 import { createCoversRouter } from './routes/covers.js';
@@ -64,6 +65,7 @@ const requireAuth = createAuthMiddleware(createFirebaseVerifier(FIREBASE_PROJECT
 
 // API routes
 app.use('/api/collection', apiLimiter, requireAuth, collectionRouter);
+app.use('/api/settings', apiLimiter, requireAuth, settingsRouter);
 app.use('/api/scan', scanLimiter, requireAuth, scanRouter);
 app.use('/api/scans', apiLimiter, requireAuth, createScansRouter(storage));
 app.use('/api/scan-history', apiLimiter, requireAuth, createScanHistoryRouter(storage));

@@ -6,6 +6,8 @@ import { FilterDropdown } from '../components/FilterDropdown';
 import { Icons } from '../components/Icons';
 import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { useAddToCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
+import { useSettingsQuery } from '../hooks/useSettings';
+import { getBrowserLocales, resolveEffectivePreferredRegion } from '../lib/detectRegionFromLocale';
 import {
   FilterState,
   loadStoredFilterState,
@@ -71,6 +73,14 @@ export function DiscoverView() {
   const navigate = routeApi.useNavigate();
   const { data: collection } = useCollectionQuery();
   const addMutation = useAddToCollectionMutation();
+  const { data: settings } = useSettingsQuery();
+  const representativePreferences = useMemo(
+    () => ({
+      preferredFormat: settings.preferredFormat,
+      preferredRegion: resolveEffectivePreferredRegion(settings.preferredRegion, getBrowserLocales()),
+    }),
+    [settings.preferredFormat, settings.preferredRegion],
+  );
 
   const [searchMode, setSearchMode] = useState<'simple' | 'advanced'>(search.m ?? 'simple');
   const [simpleSearchType, setSimpleSearchType] = useState<DiscoverSearchType>(search.st ?? 'title');
@@ -618,7 +628,7 @@ export function DiscoverView() {
         toast.error(`Couldn't load releases for "${group.title}". Please try again.`);
         return;
       }
-      await handleAddToCollection(pickRepresentativeRelease(releases));
+      await handleAddToCollection(pickRepresentativeRelease(releases, representativePreferences));
     } catch {
       toast.error(`Couldn't load releases for "${group.title}". Please try again.`);
     }
@@ -802,6 +812,7 @@ export function DiscoverView() {
           }}
           onQuickAdd={handleQuickAdd}
           showFormatBuckets
+          preferences={representativePreferences}
           isGroupOwned={isGroupOwned}
           isReleaseActionDisabled={isReleaseOwned}
           getReleaseActionLabel={(_, disabled) => (disabled ? 'In Collection' : 'Add to Collection')}
