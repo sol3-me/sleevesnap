@@ -85,9 +85,34 @@ export interface ReleaseVariantGroup<T> {
 // pressing, so it's the best default when one exists.
 const WORLDWIDE_COUNTRY_CODE = 'XW';
 
-// Exported so quick-add (picking one release for the whole group, not just
-// within a single format+year variant) can reuse the same priority.
-export function pickRepresentativeRelease<T extends { country?: string; releaseDate?: string }>(releases: T[]): T {
+export type FormatFamily = 'Vinyl' | 'CD' | 'Cassette' | 'Digital Media' | 'DVD/Blu-ray' | 'Other';
+
+// The fixed set a "preferred format" setting can choose from — deliberately
+// not the same list as bucketForFormat's dynamically-discovered buckets
+// above, since a settings dropdown needs a small closed list, not "whatever
+// raw strings happened to show up in the last search". Same substring
+// patterns ReleaseGroupResultsList's getFormatIcon already used for icon
+// selection, so icon lookup and preference matching share one definition of
+// "which family is this".
+export const FORMAT_FAMILY_OPTIONS: FormatFamily[] = ['Vinyl', 'CD', 'Cassette', 'Digital Media', 'DVD/Blu-ray'];
+
+export function classifyFormatFamily(rawFormat?: string): FormatFamily {
+  if (!rawFormat) return 'Other';
+  const normalized = rawFormat.toLowerCase();
+  if (normalized.includes('vinyl') || normalized === 'lp') return 'Vinyl';
+  if (normalized.includes('cd')) return 'CD';
+  if (normalized.includes('cassette') || normalized.includes('tape')) return 'Cassette';
+  if (normalized.includes('digital')) return 'Digital Media';
+  if (normalized.includes('dvd') || normalized.includes('blu-ray') || normalized.includes('video')) return 'DVD/Blu-ray';
+  return 'Other';
+}
+
+export interface RepresentativePreferences {
+  preferredFormat?: string | null;
+  preferredRegion?: string | null;
+}
+
+function defaultRepresentative<T extends { country?: string; releaseDate?: string }>(releases: T[]): T {
   const worldwide = releases.find((release) => release.country === WORLDWIDE_COUNTRY_CODE);
   if (worldwide) return worldwide;
 
@@ -101,6 +126,35 @@ export function pickRepresentativeRelease<T extends { country?: string; releaseD
   return releases[0];
 }
 
+// Picks one release to add/show by default when the user hasn't manually
+// chosen a specific edition. preferredFormat is applied first (format
+// matters more to most collectors than region) — if nothing in this group
+// matches, the format preference is dropped and every release stays in
+// play. preferredRegion is then a secondary preference within whatever the
+// format step left: an exact country match wins outright; otherwise falls
+// back to the original Worldwide > earliest releaseDate > first-in-list
+// priority. Passing no preferences (or preferences the caller doesn't set)
+// reproduces the original behavior exactly.
+export function pickRepresentativeRelease<
+  T extends { country?: string; releaseDate?: string; format?: string },
+>(releases: T[], preferences?: RepresentativePreferences): T {
+  const formatCandidates = preferences?.preferredFormat
+    ? (() => {
+        const matches = releases.filter(
+          (release) => classifyFormatFamily(release.format) === preferences.preferredFormat,
+        );
+        return matches.length > 0 ? matches : releases;
+      })()
+    : releases;
+
+  if (preferences?.preferredRegion) {
+    const regionMatch = formatCandidates.find((release) => release.country === preferences.preferredRegion);
+    if (regionMatch) return regionMatch;
+  }
+
+  return defaultRepresentative(formatCandidates);
+}
+
 // Same album/format/year pressed in a dozen countries reads as spam in an
 // expanded release list — group them into one variant so the default view
 // shows one entry per real edition, with the full region list available to
@@ -110,7 +164,7 @@ export function pickRepresentativeRelease<T extends { country?: string; releaseD
 // each other.
 export function groupReleasesByFormatAndYear<
   T extends { format?: string; year?: string; country?: string; releaseDate?: string },
->(releases: T[]): ReleaseVariantGroup<T>[] {
+>(releases: T[], preferences?: RepresentativePreferences): ReleaseVariantGroup<T>[] {
   const order: string[] = [];
   const byKey = new Map<string, { format: string; year: string; releases: T[] }>();
 
@@ -129,7 +183,7 @@ export function groupReleasesByFormatAndYear<
 
   return order.map((key) => {
     const entry = byKey.get(key)!;
-    return { ...entry, representative: pickRepresentativeRelease(entry.releases) };
+    return { ...entry, representative: pickRepresentativeRelease(entry.releases, preferences) };
   });
 }
 

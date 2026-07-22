@@ -225,7 +225,7 @@ test('classifyFormatFamily recognises DVD/Blu-ray variants', () => {
 });
 
 test('classifyFormatFamily falls back to "Other" for unrecognised or missing formats', () => {
-  assert.equal(classifyFormatFamily('SACD'), 'Other');
+  assert.equal(classifyFormatFamily('8-Track Cartridge'), 'Other');
   assert.equal(classifyFormatFamily(undefined), 'Other');
 });
 
