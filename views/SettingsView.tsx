@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icons } from '../components/Icons';
 import { useAuth } from '../contexts/AuthContext';
-import { useClearCollectionMutation, useCollectionQuery } from '../hooks/useCollection';
+import { useClearCollectionMutation, useCollectionQuery, useImportCollectionMutation } from '../hooks/useCollection';
 import { getProviderLabel } from '../lib/authProviderLabel';
+import { serializeCollectionExport } from '../lib/collectionExport';
+import { parseCollectionImport } from '../lib/collectionImport';
+import { triggerTextDownload } from '../lib/downloadFile';
 
 function AccountInfoSection() {
   const { user } = useAuth();
@@ -37,6 +40,78 @@ function AccountInfoSection() {
   );
 }
 
+function DataSection() {
+  const { data: collection } = useCollectionQuery();
+  const importMutation = useImportCollectionMutation();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExport = () => {
+    const filename = `sleevesnap-collection-${new Date().toISOString().slice(0, 10)}.json`;
+    triggerTextDownload(serializeCollectionExport(collection, new Date()), filename, 'application/json');
+  };
+
+  const handleImportFileChosen = async (file: File) => {
+    const text = await file.text();
+    const { valid, errors } = parseCollectionImport(text);
+
+    if (valid.length === 0) {
+      toast.error(errors[0] ?? 'No valid records found in that file.');
+      return;
+    }
+
+    try {
+      const { added, duplicates } = await importMutation.mutateAsync(valid);
+      const skipped = errors.length;
+      const parts = [
+        `${added} added`,
+        duplicates > 0 ? `${duplicates} already in your collection` : undefined,
+        skipped > 0 ? `${skipped} skipped (invalid)` : undefined,
+      ].filter(Boolean);
+      toast.success(parts.join(', '));
+    } catch {
+      toast.error('Failed to import collection. Please try again.');
+    }
+  };
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 mb-4">
+      <h3 className="text-sm font-semibold text-white mb-1">Data</h3>
+      <p className="text-sm text-gray-400 mb-4">Back up your collection to a file, or restore it on another device.</p>
+      <div className="flex flex-wrap gap-3">
+        <button
+          type="button"
+          disabled={collection.length === 0}
+          onClick={handleExport}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm font-medium text-gray-200 hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/5"
+        >
+          <Icons.Download />
+          Export collection
+        </button>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={importMutation.isPending}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm font-medium text-gray-200 hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Icons.Upload />
+          {importMutation.isPending ? 'Importing…' : 'Import collection'}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) void handleImportFileChosen(file);
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
 export function SettingsView() {
   const { data: collection } = useCollectionQuery();
   const clearMutation = useClearCollectionMutation();
@@ -57,6 +132,8 @@ export function SettingsView() {
       <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-white mb-6 md:mb-8">Settings</h2>
 
       <AccountInfoSection />
+
+      <DataSection />
 
       <section className="rounded-2xl border border-red-500/20 bg-red-500/5 p-5">
         <h3 className="text-sm font-semibold text-red-400 mb-1">Danger Zone</h3>
