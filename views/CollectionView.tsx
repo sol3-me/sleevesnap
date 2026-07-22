@@ -1,17 +1,17 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, Link } from '@tanstack/react-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { Icons } from '../components/Icons';
 import { VinylCard } from '../components/VinylCard';
 import { collectionQueryKey, useCollectionQuery, useRemoveFromCollectionMutation } from '../hooks/useCollection';
 import { useIsMobileLayout } from '../hooks/useIsMobileLayout';
+import { useSettingsQuery, useUpdateCardSizeMutation } from '../hooks/useSettings';
 import { resolveArtistEntityByName } from '../lib/entityResolvers';
 import { VinylRecord } from '../types';
 
 const routeApi = getRouteApi('/');
 
-const COLLECTION_CARD_SIZE_KEY = 'sleevesnap:collection-card-size:v1';
 const COLLECTION_CARD_SIZE_MIN = 180;
 const COLLECTION_CARD_SIZE_MAX = 360;
 const DEFAULT_COLLECTION_CARD_SIZE = 240;
@@ -22,37 +22,13 @@ const REMOVE_UNDO_WINDOW_MS = 5000;
 
 // Pixels aren't a mental model users reach for — a discrete S/M/L choice
 // covers the real need (ux-improvement-plan.md §3.7). Bounds match the old
-// slider's min/mid/max so existing localStorage values still land sensibly.
+// slider's min/mid/max. The label (not the px value) is what's persisted
+// server-side, in case these px values ever get retuned.
 const COLLECTION_CARD_SIZE_PRESETS = [
   { label: 'S', size: COLLECTION_CARD_SIZE_MIN },
   { label: 'M', size: DEFAULT_COLLECTION_CARD_SIZE },
   { label: 'L', size: COLLECTION_CARD_SIZE_MAX },
 ] as const;
-
-function snapToNearestPreset(value: number): number {
-  return COLLECTION_CARD_SIZE_PRESETS.reduce(
-    (closest, preset) => (Math.abs(preset.size - value) < Math.abs(closest - value) ? preset.size : closest),
-    COLLECTION_CARD_SIZE_PRESETS[0].size,
-  );
-}
-
-function loadStoredCollectionCardSize(): number {
-  if (typeof window === 'undefined') {
-    return DEFAULT_COLLECTION_CARD_SIZE;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(COLLECTION_CARD_SIZE_KEY);
-    if (!raw) return DEFAULT_COLLECTION_CARD_SIZE;
-    const parsed = Number.parseInt(raw, 10);
-    if (Number.isNaN(parsed)) return DEFAULT_COLLECTION_CARD_SIZE;
-    // Old slider could persist any 10px step; snap it onto the nearest
-    // preset so a leftover value from before this change still picks something.
-    return snapToNearestPreset(parsed);
-  } catch {
-    return DEFAULT_COLLECTION_CARD_SIZE;
-  }
-}
 
 export function CollectionView() {
   const { highlight } = routeApi.useSearch();
@@ -61,21 +37,16 @@ export function CollectionView() {
   const removeMutation = useRemoveFromCollectionMutation();
   const queryClient = useQueryClient();
   const isMobileLayout = useIsMobileLayout();
-  const [collectionCardSize, setCollectionCardSize] = useState<number>(() => loadStoredCollectionCardSize());
+  const { data: settings } = useSettingsQuery();
+  const updateCardSizeMutation = useUpdateCardSizeMutation();
+  const collectionCardSize =
+    COLLECTION_CARD_SIZE_PRESETS.find((preset) => preset.label === settings.cardSize)?.size ??
+    DEFAULT_COLLECTION_CARD_SIZE;
   const highlightedCardRef = useRef<HTMLDivElement>(null);
   // Records the user has just removed but hasn't been sent to the server
   // yet, keyed by record id — gives the "Undo" toast action a window to
   // cancel the delete before it actually happens.
   const pendingRemovalsRef = useRef<Record<string, { record: VinylRecord; timeoutId: ReturnType<typeof setTimeout> }>>({});
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(COLLECTION_CARD_SIZE_KEY, String(collectionCardSize));
-    } catch {
-      // Ignore storage write failures.
-    }
-  }, [collectionCardSize]);
 
   // Cancel any in-flight "undo window" deletes on unmount so we never call
   // the remove mutation against a component that's gone away.
@@ -186,10 +157,10 @@ export function CollectionView() {
             <button
               key={preset.label}
               type="button"
-              onClick={() => setCollectionCardSize(preset.size)}
-              aria-pressed={collectionCardSize === preset.size}
+              onClick={() => updateCardSizeMutation.mutate(preset.label)}
+              aria-pressed={settings.cardSize === preset.label}
               className={`w-7 h-7 rounded-full text-xs font-semibold transition-colors ${
-                collectionCardSize === preset.size
+                settings.cardSize === preset.label
                   ? 'bg-vinyl-accent/20 text-vinyl-accent'
                   : 'text-gray-500 hover:text-gray-300'
               }`}
