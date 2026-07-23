@@ -1,34 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { LandingWallBackground } from '../components/LandingWallBackground';
 import { Icons } from '../components/Icons';
+import { useLandingCovers, useLandingWallTiles } from '../hooks/useLandingWall';
 import { DEMO_PHASE_MS, advanceDemo, type DemoState } from '../lib/landingDemo';
-import {
-  buildWallTiles,
-  pickWallCovers,
-  wallTileCountFor,
-  type LandingCover,
-} from '../lib/landingWall';
+import { pickWallCovers, WALL_PALETTE, type LandingCover } from '../lib/landingWall';
 import { SNAP_TEXT_OUTLINE } from '../lib/snapOutline';
-
-// Muted sleeve-ish tones for tiles the cover cache can't fill yet, so a
-// cold cache still reads as a wall of records rather than a broken grid.
-const WALL_PALETTE = [
-  '#4a1b0c',
-  '#26215c',
-  '#04342c',
-  '#412402',
-  '#4b1528',
-  '#042c53',
-  '#2c2c2a',
-  '#501313',
-  '#173404',
-  '#712b13',
-  '#3c3489',
-  '#085041',
-];
 
 type LandingViewProps = {
   onSignIn: () => void;
   onSignUp: () => void;
+  onAbout: () => void;
 };
 
 function CameraIcon() {
@@ -170,49 +151,9 @@ function DemoPhone({ albums }: { albums: LandingCover[] }) {
  * from the curated landing pool (public endpoint, cache-backed), padded
  * with flat colour tiles while the pool warms.
  */
-export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
-  const [covers, setCovers] = useState<LandingCover[]>([]);
-  const [tileCount, setTileCount] = useState(() => wallTileCountFor(window.innerWidth));
-
-  // Fetch the whole pool of web-optimized thumbnails once, then preload every
-  // one into the browser cache. Covers are tiny (~256px JPEGs) and immutably
-  // cached, so a first visit pulls a couple of MB and every later refresh —
-  // which reshuffles the wall — is served entirely from cache.
-  useEffect(() => {
-    let cancelled = false;
-    void fetch('/api/landing/covers')
-      .then((res) => (res.ok ? res.json() : { covers: [] }))
-      .then((data: { covers?: LandingCover[] }) => {
-        if (cancelled || !Array.isArray(data.covers)) return;
-        setCovers(data.covers);
-        for (const cover of data.covers) {
-          const img = new Image();
-          img.src = cover.url;
-        }
-      })
-      .catch(() => {
-        // The wall degrades to palette tiles; nothing to surface.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Fewer tiles on mobile, more on desktop; wallTileCountFor returns
-  // bucketed values, so resize only re-renders on a breakpoint change.
-  useEffect(() => {
-    const onResize = () => setTileCount(wallTileCountFor(window.innerWidth));
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  // Random, no-duplicate selection — reshuffles on every visit. The whole
-  // pool is preloaded, so each pick is a cache hit.
-  const tiles = useMemo(
-    () => buildWallTiles(pickWallCovers(covers, tileCount), tileCount, WALL_PALETTE),
-    [covers, tileCount],
-  );
-
+export function LandingView({ onSignIn, onSignUp, onAbout }: LandingViewProps) {
+  const covers = useLandingCovers();
+  const tiles = useLandingWallTiles(covers, WALL_PALETTE);
   const demoAlbums = useMemo(() => pickWallCovers(covers, 3), [covers]);
 
   const accentButtonClassName =
@@ -228,6 +169,13 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
         <header className="shrink-0 flex items-center px-4 sm:px-6 py-3 border-b border-white/5">
         <BrandMark />
         <div className="ml-auto flex items-center gap-1 sm:gap-3">
+          <button
+            type="button"
+            onClick={onAbout}
+            className="px-3 py-2 text-sm text-gray-300 hover:text-white transition-colors"
+          >
+            About
+          </button>
           <button
             type="button"
             onClick={onSignIn}
@@ -247,27 +195,7 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
       </header>
 
       <section className="shrink-0 relative overflow-hidden border-b border-white/5 lg:min-h-[60vh] lg:flex lg:items-center">
-        <div className="absolute inset-0 bg-vinyl-950" aria-hidden="true">
-          <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-1 p-1">
-            {tiles.map((tile, i) =>
-              tile.kind === 'cover' ? (
-                <img
-                  key={i}
-                  src={tile.url}
-                  alt=""
-                  className="aspect-square w-full object-cover rounded-sm"
-                />
-              ) : (
-                <div
-                  key={i}
-                  className="aspect-square w-full rounded-sm"
-                  style={{ backgroundColor: tile.color }}
-                ></div>
-              ),
-            )}
-          </div>
-          <div className="absolute inset-0 bg-vinyl-950/80"></div>
-        </div>
+        <LandingWallBackground tiles={tiles} />
 
         <div className="relative w-full flex flex-col items-center text-center px-6 py-16 sm:py-24">
           <h1 className="text-3xl sm:text-5xl font-bold tracking-tight mb-4">
