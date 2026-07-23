@@ -6,6 +6,15 @@ import { ReleaseGroupResultsList } from '../components/ReleaseGroupResultsList';
 import { QUOTA_TEXT_TONE_CLASSES, ScanQuotaBanner, quotaTone } from '../components/ScanQuotaBanner';
 import { bestGuess, confidenceTier, confidenceTierLabel, guessToFields } from '../lib/aiGuessFields';
 import { triggerImageDownload } from '../lib/downloadImage';
+import {
+  advanceStability,
+  initialStabilityState,
+  isGoodCandidate,
+  squareness as quadSquareness,
+  fillRatio as quadFillRatio,
+  type Corners,
+} from '../lib/sleeveDetectionScoring';
+import { detectSleeveCorners, warmUpSleeveDetector } from '../lib/sleeveDetector';
 import { SNAP_TEXT_OUTLINE } from '../lib/snapOutline';
 import { logEvent, logWarn } from '../services/telemetry';
 import {
@@ -91,6 +100,19 @@ const HistoryIcon = () => (
 /** Fraction of the shorter viewfinder dimension the square capture frame occupies. */
 const FRAME_RATIO = 0.82;
 
+// ── Auto-capture (experimental — see auto-capture-research.md) ──────────────
+// Detection runs on a downscaled copy of the video frame (full-resolution
+// OpenCV.js contour detection is unnecessary work and slower); corners come
+// back in that downscaled canvas's coordinate space and get rescaled for
+// on-screen drawing and cropping.
+const AUTO_CAPTURE_DETECTION_WIDTH = 480;
+const AUTO_CAPTURE_SAMPLE_INTERVAL_MS = 200;
+const AUTO_CAPTURE_MIN_SQUARENESS = 0.85;
+const AUTO_CAPTURE_MIN_FILL_RATIO = 0.35;
+// ~1.2s of continuous good frames at the sample interval above — long enough
+// that a momentary wobble or a passing non-sleeve square doesn't fire it.
+const AUTO_CAPTURE_REQUIRED_STABLE_FRAMES = 6;
+
 type Stage =
   | 'capture'           // camera / file-upload view
   | 'analyzing'         // waiting for /api/scan response
@@ -125,6 +147,21 @@ export const Scanner: React.FC<ScannerProps> = ({
   // capture crop matches exactly what the user framed. Also drives the stamp animation.
   const [frameRect, setFrameRect] = useState({ size: 0, left: 0, top: 0 });
   const [isCapturing, setIsCapturing] = useState(false);
+
+  // Auto-capture (experimental) — see auto-capture-research.md. Off by
+  // default; toggled per-session in the live camera view, never persisted.
+  const [isAutoCaptureEnabled, setIsAutoCaptureEnabled] = useState(false);
+  // Detected quad in on-screen container pixel space, for drawing the
+  // overlay — null whenever nothing is currently detected.
+  const [detectedQuadOnScreen, setDetectedQuadOnScreen] = useState<Corners | null>(null);
+  const [autoCaptureDebug, setAutoCaptureDebug] = useState<{
+    squarenessPct: number;
+    fillPct: number;
+    stableFrames: number;
+  } | null>(null);
+  const detectionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const stabilityStateRef = useRef(initialStabilityState);
+  const isDetectionTickRunningRef = useRef(false);
 
   // match_found state
   const [matchedRecord, setMatchedRecord] = useState<VinylRecord | null>(null);
@@ -286,6 +323,116 @@ export const Scanner: React.FC<ScannerProps> = ({
       processImage(dataUrl, 'camera');
     }, 1400);
   }, [isVideoReady, stopCamera]);
+
+  // ── Auto-capture (experimental — see auto-capture-research.md) ─────────────
+  // Runs contour detection on sampled frames while the toggle is on, scores
+  // each detection with sleeveDetectionScoring.ts's heuristics, and fires the
+  // *existing* captureFromCamera() once a good-enough quad has held steady
+  // for AUTO_CAPTURE_REQUIRED_STABLE_FRAMES in a row. Detection only decides
+  // *when* to fire — the crop itself is still the same fixed-square crop as
+  // manual capture. Cropping to the actual detected quad (with perspective
+  // correction) is a deliberate follow-up once detection reliability itself
+  // is validated, not bundled into this first pass.
+  useEffect(() => {
+    if (!isStreaming || !isAutoCaptureEnabled) {
+      stabilityStateRef.current = initialStabilityState;
+      setDetectedQuadOnScreen(null);
+      setAutoCaptureDebug(null);
+      return;
+    }
+
+    let cancelled = false;
+    void warmUpSleeveDetector();
+
+    const tick = async () => {
+      if (cancelled || isDetectionTickRunningRef.current) return;
+      const video = videoRef.current;
+      const container = videoContainerRef.current;
+      if (!video || !container || !isVideoReady || video.videoWidth === 0 || isCapturing) return;
+
+      isDetectionTickRunningRef.current = true;
+      try {
+        if (!detectionCanvasRef.current) {
+          detectionCanvasRef.current = document.createElement('canvas');
+        }
+        const detectionCanvas = detectionCanvasRef.current;
+        const detectionScale = AUTO_CAPTURE_DETECTION_WIDTH / video.videoWidth;
+        const detectionWidth = AUTO_CAPTURE_DETECTION_WIDTH;
+        const detectionHeight = Math.round(video.videoHeight * detectionScale);
+        detectionCanvas.width = detectionWidth;
+        detectionCanvas.height = detectionHeight;
+        const ctx = detectionCanvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(video, 0, 0, detectionWidth, detectionHeight);
+
+        const corners = await detectSleeveCorners(detectionCanvas);
+        if (cancelled) return;
+
+        if (!corners) {
+          stabilityStateRef.current = initialStabilityState;
+          setDetectedQuadOnScreen(null);
+          setAutoCaptureDebug(null);
+          return;
+        }
+
+        const good = isGoodCandidate(corners, detectionWidth, detectionHeight, {
+          minSquareness: AUTO_CAPTURE_MIN_SQUARENESS,
+          minFillRatio: AUTO_CAPTURE_MIN_FILL_RATIO,
+        });
+        const { state, shouldCapture } = advanceStability(
+          stabilityStateRef.current,
+          good,
+          AUTO_CAPTURE_REQUIRED_STABLE_FRAMES,
+        );
+        stabilityStateRef.current = state;
+
+        setAutoCaptureDebug({
+          squarenessPct: Math.round(quadSquareness(corners) * 100),
+          fillPct: Math.round(quadFillRatio(corners, detectionWidth, detectionHeight) * 100),
+          stableFrames: state.consecutiveGoodFrames,
+        });
+
+        // Map from the downscaled detection canvas's coordinate space to
+        // on-screen container pixels: scale back up to native video-pixel
+        // space, then apply the same object-cover transform captureFromCamera
+        // uses above, in reverse (source-video point → on-screen point).
+        const rect = container.getBoundingClientRect();
+        const coverScale = Math.max(rect.width / video.videoWidth, rect.height / video.videoHeight);
+        const offsetX = (video.videoWidth * coverScale - rect.width) / 2;
+        const offsetY = (video.videoHeight * coverScale - rect.height) / 2;
+        const toScreen = (p: { x: number; y: number }) => ({
+          x: (p.x / detectionScale) * coverScale - offsetX,
+          y: (p.y / detectionScale) * coverScale - offsetY,
+        });
+        setDetectedQuadOnScreen({
+          topLeftCorner: toScreen(corners.topLeftCorner),
+          topRightCorner: toScreen(corners.topRightCorner),
+          bottomLeftCorner: toScreen(corners.bottomLeftCorner),
+          bottomRightCorner: toScreen(corners.bottomRightCorner),
+        });
+
+        if (shouldCapture) {
+          stabilityStateRef.current = initialStabilityState;
+          captureFromCamera();
+        }
+      } catch (err) {
+        logWarn('scanner', 'Auto-capture detection tick failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        isDetectionTickRunningRef.current = false;
+      }
+    };
+
+    const interval = window.setInterval(() => void tick(), AUTO_CAPTURE_SAMPLE_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      stabilityStateRef.current = initialStabilityState;
+      setDetectedQuadOnScreen(null);
+      setAutoCaptureDebug(null);
+    };
+  }, [isStreaming, isAutoCaptureEnabled, isVideoReady, isCapturing, captureFromCamera]);
 
   /** Shared by file-input selection and drag-and-drop. */
   const handleFile = useCallback((file: File, method: CaptureMethod) => {
@@ -806,6 +953,46 @@ export const Scanner: React.FC<ScannerProps> = ({
                   Frame the sleeve in the square
                 </p>
               </>
+            )}
+
+            {/* Auto-capture (experimental) — toggle, live detected-quad overlay,
+                and a debug readout so detection quality is visible while
+                testing, not just inferred from whether it eventually fires. */}
+            <button
+              type="button"
+              onClick={() => setIsAutoCaptureEnabled((enabled) => !enabled)}
+              className={`absolute top-3 right-3 z-10 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                isAutoCaptureEnabled
+                  ? 'bg-vinyl-accent/20 border-vinyl-accent/60 text-vinyl-accent'
+                  : 'bg-black/40 border-white/20 text-white/70 hover:text-white'
+              }`}
+            >
+              Auto-capture (beta) {isAutoCaptureEnabled ? 'On' : 'Off'}
+            </button>
+
+            {isAutoCaptureEnabled && detectedQuadOnScreen && (
+              <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
+                <polygon
+                  points={[
+                    detectedQuadOnScreen.topLeftCorner,
+                    detectedQuadOnScreen.topRightCorner,
+                    detectedQuadOnScreen.bottomRightCorner,
+                    detectedQuadOnScreen.bottomLeftCorner,
+                  ]
+                    .map((p) => `${p.x},${p.y}`)
+                    .join(' ')}
+                  fill="rgba(56,189,248,0.15)"
+                  stroke="rgb(56,189,248)"
+                  strokeWidth={3}
+                />
+              </svg>
+            )}
+
+            {isAutoCaptureEnabled && autoCaptureDebug && (
+              <div className="absolute bottom-3 left-3 z-10 px-2.5 py-1.5 rounded-lg bg-black/50 text-[11px] text-white/80 font-mono">
+                square {autoCaptureDebug.squarenessPct}% · fill {autoCaptureDebug.fillPct}% · stable{' '}
+                {autoCaptureDebug.stableFrames}/{AUTO_CAPTURE_REQUIRED_STABLE_FRAMES}
+              </div>
             )}
 
             {/* Capture flash */}

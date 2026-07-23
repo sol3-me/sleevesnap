@@ -19,6 +19,9 @@ data/
 # Generated from node_modules/flag-icons by scripts/copyFlagIcons.mjs (postinstall)
 public/flags/
 
+# Generated from node_modules/jscanify by scripts/copyOpenCv.mjs (postinstall)
+public/opencv.js
+
 # Seeded Firebase Auth Emulator data (npm run dev:emulators)
 .firebase-emulator-data/
 
