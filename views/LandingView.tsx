@@ -29,6 +29,7 @@ const WALL_PALETTE = [
 type LandingViewProps = {
   onSignIn: () => void;
   onSignUp: () => void;
+  onAbout: () => void;
 };
 
 function CameraIcon() {
@@ -170,7 +171,7 @@ function DemoPhone({ albums }: { albums: LandingCover[] }) {
  * from the curated landing pool (public endpoint, cache-backed), padded
  * with flat colour tiles while the pool warms.
  */
-export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
+export function LandingView({ onSignIn, onSignUp, onAbout }: LandingViewProps) {
   const [covers, setCovers] = useState<LandingCover[]>([]);
   const [tileCount, setTileCount] = useState(() => wallTileCountFor(window.innerWidth));
 
@@ -327,6 +328,13 @@ export function LandingView({ onSignIn, onSignUp }: LandingViewProps) {
           <span className="flex items-center gap-1.5">
             <Icons.Coins /> Free, no ads
           </span>
+          <button
+            type="button"
+            onClick={onAbout}
+            className="hover:text-gray-300 transition-colors"
+          >
+            About
+          </button>
         </footer>
       </div>
     </div>

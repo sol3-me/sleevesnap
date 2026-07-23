@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router';
 import { NotFoundRedirect } from './components/NotFoundRedirect';
+import { AboutView } from './views/AboutView';
 import { LandingView } from './views/LandingView';
 import { LoginView, type EmailMode } from './views/LoginView';
 
@@ -16,12 +17,18 @@ const publicRootRoute = createRootRoute({
 // paths, no Register dependency. A push per navigation (rather than
 // history.back()) keeps behaviour predictable for direct links that have no
 // prior app history to go back to.
-function goTo(path: '/' | '/login' | '/signup'): void {
+function goTo(path: '/' | '/login' | '/signup' | '/about'): void {
   publicRouter.history.push(path);
 }
 
 function LandingRouteComponent() {
-  return <LandingView onSignIn={() => goTo('/login')} onSignUp={() => goTo('/signup')} />;
+  return (
+    <LandingView
+      onSignIn={() => goTo('/login')}
+      onSignUp={() => goTo('/signup')}
+      onAbout={() => goTo('/about')}
+    />
+  );
 }
 
 /** Shared by /login and /signup: the URL owns which form is showing. */
@@ -53,7 +60,18 @@ const signupRoute = createRoute({
   component: () => <AuthRouteComponent mode="sign-up" />,
 });
 
-const publicRouteTree = publicRootRoute.addChildren([publicIndexRoute, loginRoute, signupRoute]);
+const aboutRoute = createRoute({
+  getParentRoute: () => publicRootRoute,
+  path: '/about',
+  component: () => <AboutView onBack={() => goTo('/')} />,
+});
+
+const publicRouteTree = publicRootRoute.addChildren([
+  publicIndexRoute,
+  loginRoute,
+  signupRoute,
+  aboutRoute,
+]);
 
 /**
  * Router for signed-out visitors: landing page plus dedicated /login and
