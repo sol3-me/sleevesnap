@@ -1,3 +1,20 @@
+// Muted sleeve-ish tones for tiles the cover cache can't fill yet, so a
+// cold cache still reads as a wall of records rather than a broken grid.
+export const WALL_PALETTE = [
+  '#4a1b0c',
+  '#26215c',
+  '#04342c',
+  '#412402',
+  '#4b1528',
+  '#042c53',
+  '#2c2c2a',
+  '#501313',
+  '#173404',
+  '#712b13',
+  '#3c3489',
+  '#085041',
+];
+
 /**
  * Wall tile counts by viewport width, matching the hero grid's Tailwind
  * breakpoints (grid-cols-4 / sm:6 / lg:8 at 5 rows): mobile draws fewer

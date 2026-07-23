@@ -63,7 +63,7 @@ const signupRoute = createRoute({
 const aboutRoute = createRoute({
   getParentRoute: () => publicRootRoute,
   path: '/about',
-  component: () => <AboutView onBack={() => goTo('/')} />,
+  component: () => <AboutView onHome={() => goTo('/')} />,
 });
 
 const publicRouteTree = publicRootRoute.addChildren([
