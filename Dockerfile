@@ -3,8 +3,11 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install all dependencies (including devDependencies for the build)
+# Install all dependencies (including devDependencies for the build).
+# scripts/ is copied ahead of the rest of the source because postinstall
+# (copyFlagIcons.mjs) runs during `npm ci`, before the main `COPY . .` below.
 COPY package.json package-lock.json* ./
+COPY scripts ./scripts
 RUN npm ci
 
 # Copy source
