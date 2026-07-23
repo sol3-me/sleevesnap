@@ -45,6 +45,7 @@ _(none currently outstanding — see Recently shipped below)_
 
 ## Undecided / blocked on other work
 
+- [ ] **[Scan & capture]** Auto-capture the sleeve on detection instead of manual align-and-press (2026-07-23) — research done, see `auto-capture-research.md`. Recommendation: prototype with jscanify against real sleeves first to validate detection reliability, then (if it holds up) replace with a hand-rolled OpenCV.js contour pipeline on a custom-trimmed `core`+`imgproc`-only build to keep bundle size sane; manual shutter stays as a fallback either way. Not started.
 - [ ] **[Growth & onboarding]** Landing follow-up (a): "Try a demo scan" currently scrolls to the looping animation — re-point it at real guest mode when that ships (blocked on guest mode below, not a sizing issue)
 - [ ] **[Growth & onboarding]** Demo/guest-mode-with-transfer-on-signup — agreed direction, needs its own design pass (see `ux-improvement-plan.md`'s Firebase Auth update note)
 - [ ] **[Growth & onboarding]** Import collection in batch *from another source* (format/approach still undecided — Discogs CSV import was floated in `ux-improvement-plan.md` §3.5 as one option). Note: this is distinct from the JSON export/import shipped in the settings page (see Recently Shipped) — that's a sleevesnap-to-sleevesnap backup/restore format, not an ingest path for a Discogs/Spotify/etc. export.
