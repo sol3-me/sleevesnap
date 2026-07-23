@@ -111,6 +111,16 @@ export function initDb(): void {
   addColumnIfMissing('release_url', 'TEXT');
   addColumnIfMissing('discogs_url', 'TEXT');
   addColumnIfMissing('thumbnail_url', 'TEXT');
+  addColumnIfMissing('cover_source', 'TEXT');
+
+  // One-time backfill for rows that predate cover_source: infer from
+  // cover_url shape (a locally-stored photo means the scan-capture flow
+  // already made it a "user" cover; everything else is MusicBrainz-sourced).
+  // Scoped to IS NULL so it never overwrites a value a user later set via
+  // the cover-picker toggle.
+  db.exec(
+    "UPDATE collection SET cover_source = CASE WHEN cover_url LIKE '%/covers/%' THEN 'user' ELSE 'musicbrainz' END WHERE cover_source IS NULL",
+  );
 
   // Web-optimized thumbnail URL for landing-pool covers (full-res cover_url
   // stays for the in-app collection view).
