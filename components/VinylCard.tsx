@@ -6,9 +6,10 @@ interface VinylCardProps {
   record: VinylRecord;
   onRemove?: (id: string) => void;
   onArtistClick?: (artistName: string) => void | Promise<void>;
+  onEditCover?: (record: VinylRecord) => void;
 }
 
-export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove, onArtistClick }) => {
+export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove, onArtistClick, onEditCover }) => {
   const coverCandidates = useMemo(() => {
     const releaseCoverFromMbid = record.musicBrainzId
       ? `https://coverartarchive.org/release/${record.musicBrainzId}/front-500`
@@ -73,6 +74,19 @@ export const VinylCard: React.FC<VinylCardProps> = ({ record, onRemove, onArtist
         )}
         {/* Subtle sheen so flat artwork doesn't look pasted on */}
         <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-transparent to-white/[0.04] pointer-events-none"></div>
+
+        {onEditCover && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditCover(record);
+            }}
+            className="absolute top-2 left-2 flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-full bg-black/50 backdrop-blur-sm text-gray-300 hover:bg-white/20 hover:text-white transition-colors md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+            aria-label="Change cover"
+          >
+            <Icons.Camera />
+          </button>
+        )}
 
         {onRemove && (
           <button
