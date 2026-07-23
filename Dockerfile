@@ -35,9 +35,12 @@ RUN addgroup -S sleevesnap && adduser -S sleevesnap -G sleevesnap
 
 WORKDIR /app
 
-# Install production dependencies only
+# Install production dependencies only. --ignore-scripts: postinstall
+# (copyFlagIcons.mjs) lives under scripts/, which this stage never copies —
+# and it's a no-op here anyway, since dist already has public/flags baked
+# in from the build stage.
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # Copy build artefacts from builder
 COPY --from=builder /app/dist        ./dist
