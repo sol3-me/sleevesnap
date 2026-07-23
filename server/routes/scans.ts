@@ -25,6 +25,7 @@ interface CollectionRow {
   discogs_url: string | null;
   thumbnail_url: string | null;
   cover_url: string | null;
+  cover_source: string | null;
   date_added: number;
   notes: string | null;
   phash: string | null;
@@ -50,6 +51,7 @@ function rowToRecord(row: CollectionRow) {
     discogsUrl: row.discogs_url ?? undefined,
     thumbnailUrl: row.thumbnail_url ?? undefined,
     coverUrl: row.cover_url ?? undefined,
+    coverSource: row.cover_source ?? 'musicbrainz',
     dateAdded: row.date_added,
     notes: row.notes ?? undefined,
   };
@@ -163,6 +165,7 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
     // Only accept the coverUrl if it points to a safe external host
     let coverUrl: string | null =
       providedCoverUrl && isSafeExternalUrl(providedCoverUrl) ? providedCoverUrl : null;
+    let coverSource: 'user' | 'musicbrainz' = 'musicbrainz';
     let phash: string | null = null;
 
     // If the user provided a captured photo, store it and use it as the cover
@@ -181,6 +184,7 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
         const key = `scans/${id}.jpg`;
         const storedUrl = await storage.put(key, imageBuffer, 'image/jpeg');
         coverUrl = storedUrl;
+        coverSource = 'user';
       } catch (err) {
         logWarn('scans', requestId, 'Could not store captured image, continuing without it', { error: String(err) });
       }
@@ -215,12 +219,13 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
         discogs_url,
         thumbnail_url,
         cover_url,
+        cover_source,
         date_added,
         notes,
         phash,
         user_id
       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       artist,
@@ -240,6 +245,7 @@ export function createScansRouter(storage: BlobStorageProvider): Router {
       discogsUrl ?? null,
       thumbnailUrl ?? null,
       coverUrl,
+      coverSource,
       dateAdded,
       notes ?? null,
       phash,

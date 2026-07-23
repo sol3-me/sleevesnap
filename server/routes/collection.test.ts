@@ -6,10 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-// db.ts reads CACHE_DB_PATH at module load time, so it must be set before
-// the module (and anything that transitively imports it) is loaded.
+// db.ts and collection.ts (via storage/index.js) read these at module load
+// time, so both must be set before those modules are imported.
 const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sleevesnap-collection-test-'));
 process.env.CACHE_DB_PATH = path.join(scratchDir, 'cache.db');
+process.env.STORAGE_LOCAL_PATH = path.join(scratchDir, 'covers');
 
 const { initDb } = await import('../db.js');
 const { createAuthMiddleware } = await import('../auth.js');
@@ -64,7 +65,7 @@ async function closeServer(server: http.Server): Promise<void> {
 async function requestJson(
   port: number,
   path: string,
-  method: 'GET' | 'POST' | 'DELETE',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   token: string | undefined,
   body?: unknown,
 ): Promise<{ statusCode: number; json: any }> {
@@ -86,7 +87,19 @@ async function requestJson(
         res.setEncoding('utf8');
         res.on('data', (chunk) => (data += chunk));
         res.on('end', () => {
-          const json = data ? (JSON.parse(data) as unknown) : undefined;
+          // A route that doesn't exist (or a server error) returns Express's
+          // default HTML error page, not JSON — parse defensively so that
+          // case surfaces as a normal statusCode assertion failure instead of
+          // an uncaught exception inside this event handler that hangs the
+          // test forever (the throw here can't reject the promise above).
+          let json: unknown;
+          if (data) {
+            try {
+              json = JSON.parse(data);
+            } catch {
+              json = { nonJsonBody: data };
+            }
+          }
           resolve({ statusCode: res.statusCode ?? 0, json });
         });
       },
@@ -420,6 +433,154 @@ test('POST /api/collection/import requires auth', async () => {
   try {
     const res = await requestJson(port, '/api/collection/import', 'POST', undefined, { records: [] });
     assert.equal(res.statusCode, 401);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+// --- Cover picker ----------------------------------------------------------
+
+// A real, decodable 1x1 transparent PNG — needed because the endpoint runs
+// uploaded bytes through Jimp (for thumbnailing), so garbage base64 wouldn't
+// exercise the success path.
+const TINY_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+test('PATCH /api/collection/:id/cover stores an uploaded photo and marks it user-sourced', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    await requestJson(port, '/api/collection', 'POST', 'token-a', {
+      id: 'cover-upload-target',
+      artist: 'Radiohead',
+      title: 'In Rainbows',
+      musicBrainzId: 'mbid-in-rainbows',
+      dateAdded: Date.now(),
+    });
+
+    const patched = await requestJson(
+      port,
+      '/api/collection/cover-upload-target/cover',
+      'PATCH',
+      'token-a',
+      { photo: TINY_PNG_BASE64 },
+    );
+
+    assert.equal(patched.statusCode, 200);
+    assert.equal(patched.json.record.coverSource, 'user');
+    assert.ok(
+      patched.json.record.coverUrl?.includes('/covers/'),
+      'coverUrl should point at the locally stored blob',
+    );
+    assert.ok(patched.json.record.thumbnailUrl, 'a thumbnail should be generated for the uploaded photo');
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('PATCH /api/collection/:id/cover with {source: "musicbrainz"} reverts the flag without touching the stored photo', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    await requestJson(port, '/api/collection', 'POST', 'token-a', {
+      id: 'cover-revert-target',
+      artist: 'Portishead',
+      title: 'Dummy',
+      musicBrainzId: 'mbid-dummy-revert',
+      dateAdded: Date.now(),
+    });
+
+    const uploaded = await requestJson(
+      port,
+      '/api/collection/cover-revert-target/cover',
+      'PATCH',
+      'token-a',
+      { photo: TINY_PNG_BASE64 },
+    );
+    const uploadedCoverUrl = uploaded.json.record.coverUrl;
+
+    const reverted = await requestJson(
+      port,
+      '/api/collection/cover-revert-target/cover',
+      'PATCH',
+      'token-a',
+      { source: 'musicbrainz' },
+    );
+
+    assert.equal(reverted.statusCode, 200);
+    assert.equal(reverted.json.record.coverSource, 'musicbrainz');
+    assert.equal(
+      reverted.json.record.coverUrl,
+      uploadedCoverUrl,
+      'reverting must not delete or change the previously stored photo — only the flag — so the user can toggle back again later',
+    );
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('PATCH /api/collection/:id/cover requires auth', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const res = await requestJson(
+      port,
+      '/api/collection/some-id/cover',
+      'PATCH',
+      undefined,
+      { photo: TINY_PNG_BASE64 },
+    );
+    assert.equal(res.statusCode, 401);
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test("a user cannot set another user's record cover", async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    await requestJson(port, '/api/collection', 'POST', 'token-a', {
+      id: 'a-owns-this-cover-target',
+      artist: 'Aphex Twin',
+      title: 'Drukqs',
+      musicBrainzId: 'mbid-drukqs',
+      dateAdded: Date.now(),
+    });
+
+    const res = await requestJson(
+      port,
+      '/api/collection/a-owns-this-cover-target/cover',
+      'PATCH',
+      'token-b',
+      { photo: TINY_PNG_BASE64 },
+    );
+    assert.equal(res.statusCode, 404, "user B must not be able to modify user A's record");
+  } finally {
+    await closeServer(server);
+  }
+});
+
+test('PATCH /api/collection/:id/cover rejects data that is not a decodable image', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    await requestJson(port, '/api/collection', 'POST', 'token-a', {
+      id: 'cover-invalid-target',
+      artist: 'Boards of Canada',
+      title: 'Geogaddi',
+      musicBrainzId: 'mbid-geogaddi-invalid',
+      dateAdded: Date.now(),
+    });
+
+    const res = await requestJson(
+      port,
+      '/api/collection/cover-invalid-target/cover',
+      'PATCH',
+      'token-a',
+      { photo: Buffer.from('not an image').toString('base64') },
+    );
+    assert.equal(res.statusCode, 400);
   } finally {
     await closeServer(server);
   }

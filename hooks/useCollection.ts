@@ -1,5 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { addRecord, clearCollection, getCollection, importCollection, removeRecord } from '../services/storageService';
+import {
+  addRecord,
+  clearCollection,
+  getCollection,
+  importCollection,
+  removeRecord,
+  revertRecordCoverToMusicBrainz,
+  setRecordCoverPhoto,
+} from '../services/storageService';
 import { VinylRecord } from '../types';
 
 export const collectionQueryKey = ['collection'] as const;
@@ -53,5 +61,27 @@ export function useImportCollectionMutation() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: collectionQueryKey });
     },
+  });
+}
+
+function replaceRecordInCache(queryClient: ReturnType<typeof useQueryClient>, updated: VinylRecord) {
+  queryClient.setQueryData<VinylRecord[]>(collectionQueryKey, (prev) =>
+    (prev ?? []).map((r) => (r.id === updated.id ? updated : r)),
+  );
+}
+
+export function useSetCoverPhotoMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, photo }: { id: string; photo: string }) => setRecordCoverPhoto(id, photo),
+    onSuccess: (updated) => replaceRecordInCache(queryClient, updated),
+  });
+}
+
+export function useRevertCoverMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => revertRecordCoverToMusicBrainz(id),
+    onSuccess: (updated) => replaceRecordInCache(queryClient, updated),
   });
 }

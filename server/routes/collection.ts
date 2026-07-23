@@ -1,6 +1,11 @@
 import { Router, type Request, type Response } from 'express';
 import { db } from '../db.js';
+import { computeHash } from '../imageHash.js';
+import { createThumbnail } from '../services/thumbnail.js';
+import { createStorageProvider } from '../storage/index.js';
 import { isSafeExternalUrl } from '../urlUtils.js';
+
+const storage = createStorageProvider();
 
 export const collectionRouter = Router();
 
@@ -23,6 +28,7 @@ interface CollectionRow {
   discogs_url: string | null;
   thumbnail_url: string | null;
   cover_url: string | null;
+  cover_source: string | null;
   date_added: number;
   notes: string | null;
   phash: string | null;
@@ -48,6 +54,7 @@ function rowToRecord(row: CollectionRow) {
     discogsUrl: row.discogs_url ?? undefined,
     thumbnailUrl: row.thumbnail_url ?? undefined,
     coverUrl: row.cover_url ?? undefined,
+    coverSource: row.cover_source ?? 'musicbrainz',
     dateAdded: row.date_added,
     notes: row.notes ?? undefined,
   };
@@ -71,6 +78,67 @@ collectionRouter.get('/', (req, res) => {
     .prepare('SELECT * FROM collection WHERE user_id = ? ORDER BY date_added DESC')
     .all(uid) as CollectionRow[];
   res.json(rows.map(rowToRecord));
+});
+
+// PATCH /api/collection/:id/cover – set a custom cover photo, or revert to
+// the MusicBrainz-sourced one. Reverting only flips cover_source back; the
+// previously uploaded photo is left in storage untouched, so the user can
+// toggle between the two without re-uploading each time.
+collectionRouter.patch('/:id/cover', async (req, res) => {
+  const uid = requireUid(req, res);
+  if (!uid) return;
+
+  const { id } = req.params;
+  const existing = db.prepare('SELECT id FROM collection WHERE id = ? AND user_id = ?').get(id, uid);
+  if (!existing) {
+    res.status(404).json({ error: 'Record not found' });
+    return;
+  }
+
+  const { photo, source } = req.body as { photo?: string; source?: string };
+
+  if (source === 'musicbrainz') {
+    db.prepare('UPDATE collection SET cover_source = ? WHERE id = ? AND user_id = ?').run(
+      'musicbrainz',
+      id,
+      uid,
+    );
+  } else if (typeof photo === 'string' && photo.length > 0) {
+    let buffer: Buffer;
+    let thumbBuffer: Buffer;
+    try {
+      buffer = Buffer.from(photo, 'base64');
+      thumbBuffer = await createThumbnail(buffer);
+    } catch {
+      res.status(400).json({ error: 'Could not decode image' });
+      return;
+    }
+
+    const stamp = Date.now();
+    const coverUrl = await storage.put(`collection-covers/${id}-${stamp}.jpg`, buffer, 'image/jpeg');
+    const thumbnailUrl = await storage.put(
+      `collection-covers/${id}-${stamp}-thumb.jpg`,
+      thumbBuffer,
+      'image/jpeg',
+    );
+
+    let phash: string | null = null;
+    try {
+      phash = await computeHash(buffer);
+    } catch (err) {
+      console.warn('[collection] Could not compute pHash for uploaded cover:', err);
+    }
+
+    db.prepare(
+      'UPDATE collection SET cover_url = ?, thumbnail_url = ?, cover_source = ?, phash = ? WHERE id = ? AND user_id = ?',
+    ).run(coverUrl, thumbnailUrl, 'user', phash, id, uid);
+  } else {
+    res.status(400).json({ error: 'photo or source is required' });
+    return;
+  }
+
+  const saved = db.prepare('SELECT * FROM collection WHERE id = ?').get(id) as CollectionRow;
+  res.json({ success: true, record: rowToRecord(saved) });
 });
 
 // POST /api/collection  – add a record. Deduplicates by musicBrainzId when
@@ -143,10 +211,11 @@ collectionRouter.post('/', (req, res) => {
       discogs_url,
       thumbnail_url,
       cover_url,
+      cover_source,
       date_added,
       notes,
       user_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     artist,
@@ -166,6 +235,7 @@ collectionRouter.post('/', (req, res) => {
     discogsUrl ?? null,
     thumbnailUrl ?? null,
     coverUrl ?? null,
+    'musicbrainz',
     dateAdded ?? Date.now(),
     notes ?? null,
     uid,
@@ -208,8 +278,8 @@ collectionRouter.post('/import', (req, res) => {
       id, artist, title, year, release_date, genre, format, country,
       release_status, edition, musicbrainz_id, release_group_id,
       release_group_title, release_group_url, release_url, discogs_url,
-      thumbnail_url, cover_url, date_added, notes, user_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      thumbnail_url, cover_url, cover_source, date_added, notes, user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   const importAll = db.transaction((entries: typeof records) => {
@@ -242,7 +312,7 @@ collectionRouter.post('/import', (req, res) => {
         format ?? null, country ?? null, releaseStatus ?? null, edition ?? null,
         musicBrainzId ?? null, releaseGroupId ?? null, releaseGroupTitle ?? null,
         releaseGroupUrl ?? null, releaseUrl ?? null, discogsUrl ?? null,
-        thumbnailUrl ?? null, coverUrl ?? null, dateAdded ?? Date.now(), notes ?? null,
+        thumbnailUrl ?? null, coverUrl ?? null, 'musicbrainz', dateAdded ?? Date.now(), notes ?? null,
         uid,
       );
       added += 1;

@@ -1,10 +1,17 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, Link } from '@tanstack/react-router';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { CoverPickerModal } from '../components/CoverPickerModal';
 import { Icons } from '../components/Icons';
 import { VinylCard } from '../components/VinylCard';
-import { collectionQueryKey, useCollectionQuery, useRemoveFromCollectionMutation } from '../hooks/useCollection';
+import {
+  collectionQueryKey,
+  useCollectionQuery,
+  useRemoveFromCollectionMutation,
+  useRevertCoverMutation,
+  useSetCoverPhotoMutation,
+} from '../hooks/useCollection';
 import { useIsMobileLayout } from '../hooks/useIsMobileLayout';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettings';
 import { resolveArtistEntityByName } from '../lib/entityResolvers';
@@ -35,6 +42,13 @@ export function CollectionView() {
   const navigate = routeApi.useNavigate();
   const { data: collection } = useCollectionQuery();
   const removeMutation = useRemoveFromCollectionMutation();
+  const setCoverPhotoMutation = useSetCoverPhotoMutation();
+  const revertCoverMutation = useRevertCoverMutation();
+  // Tracked by id (not the record itself) and re-derived from the live query
+  // below, so the modal reflects the updated cover/coverSource the instant a
+  // mutation succeeds instead of showing a stale snapshot.
+  const [coverPickerRecordId, setCoverPickerRecordId] = useState<string | null>(null);
+  const coverPickerRecord = collection.find((r) => r.id === coverPickerRecordId) ?? null;
   const queryClient = useQueryClient();
   const isMobileLayout = useIsMobileLayout();
   const { data: settings } = useSettingsQuery();
@@ -197,18 +211,18 @@ export function CollectionView() {
         </div>
       ) : (
         <div
+          // Fixed (not stretchy 1fr) column size on mobile too: at real phone
+          // widths (~375-430px), S/M/L (180/240/360px) mostly only fit one
+          // column anyway, and a 1fr column always stretches to fill 100% of
+          // that single column regardless of the minmax minimum — so S and M
+          // rendered identically. Fixed width makes the size choice visible
+          // no matter how many columns fit; centered so a single small card
+          // doesn't sit flush-left with a large dead gap beside it.
           className="grid gap-3 md:gap-5"
-          style={
-            isMobileLayout
-              // 1fr (not a fixed max like desktop) so columns stretch to fill
-              // the narrow viewport evenly instead of leaving a ragged gap —
-              // collectionCardSize still sets how many columns fit per row.
-              ? { gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, 1fr))` }
-              : {
-                gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
-                justifyContent: 'flex-start',
-              }
-          }
+          style={{
+            gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
+            justifyContent: isMobileLayout ? 'center' : 'flex-start',
+          }}
         >
           {collection.map(record => (
             <div
@@ -226,11 +240,33 @@ export function CollectionView() {
                 onArtistClick={(artistName) => {
                   void openArtistDetail(artistName);
                 }}
+                onEditCover={(r) => setCoverPickerRecordId(r.id)}
               />
             </div>
           ))}
         </div>
       )}
+
+      <CoverPickerModal
+        record={coverPickerRecord}
+        isSaving={setCoverPhotoMutation.isPending || revertCoverMutation.isPending}
+        onClose={() => setCoverPickerRecordId(null)}
+        onUploadPhoto={(photo) => {
+          if (!coverPickerRecordId) return;
+          setCoverPhotoMutation.mutate(
+            { id: coverPickerRecordId, photo },
+            {
+              onError: () => toast.error('Failed to set cover photo. Please try again.'),
+            },
+          );
+        }}
+        onRevertToMusicBrainz={() => {
+          if (!coverPickerRecordId) return;
+          revertCoverMutation.mutate(coverPickerRecordId, {
+            onError: () => toast.error('Failed to revert cover. Please try again.'),
+          });
+        }}
+      />
     </div>
   );
 }

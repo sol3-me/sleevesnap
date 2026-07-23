@@ -17,6 +17,7 @@ export interface VinylRecord {
   discogsUrl?: string;
   thumbnailUrl?: string;
   coverUrl?: string; // URL or Base64
+  coverSource?: 'user' | 'musicbrainz';
   dateAdded: number;
   notes?: string;
 }
