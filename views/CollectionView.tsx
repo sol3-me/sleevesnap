@@ -211,18 +211,18 @@ export function CollectionView() {
         </div>
       ) : (
         <div
+          // Fixed (not stretchy 1fr) column size on mobile too: at real phone
+          // widths (~375-430px), S/M/L (180/240/360px) mostly only fit one
+          // column anyway, and a 1fr column always stretches to fill 100% of
+          // that single column regardless of the minmax minimum — so S and M
+          // rendered identically. Fixed width makes the size choice visible
+          // no matter how many columns fit; centered so a single small card
+          // doesn't sit flush-left with a large dead gap beside it.
           className="grid gap-3 md:gap-5"
-          style={
-            isMobileLayout
-              // 1fr (not a fixed max like desktop) so columns stretch to fill
-              // the narrow viewport evenly instead of leaving a ragged gap —
-              // collectionCardSize still sets how many columns fit per row.
-              ? { gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, 1fr))` }
-              : {
-                gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
-                justifyContent: 'flex-start',
-              }
-          }
+          style={{
+            gridTemplateColumns: `repeat(auto-fill, minmax(${collectionCardSize}px, ${collectionCardSize}px))`,
+            justifyContent: isMobileLayout ? 'center' : 'flex-start',
+          }}
         >
           {collection.map(record => (
             <div
