@@ -14,6 +14,7 @@ import { createCoversRouter } from './routes/covers.js';
 import { createScansRouter } from './routes/scans.js';
 import { createScanHistoryRouter } from './routes/scanHistory.js';
 import { createLandingRouter } from './routes/landing.js';
+import { createDevCaptureRouter } from './routes/devCapture.js';
 import { startLandingWarmup } from './services/landingCovers.js';
 import { createStorageProvider } from './storage/index.js';
 import { apiLimiter, scanLimiter } from './rateLimiters.js';
@@ -76,6 +77,13 @@ app.use('/api/covers', apiLimiter, requireAuth, createCoversRouter(storage));
 // only covers from the curated landing pool (never user data) and lazily
 // warms that pool in the background on first hit.
 app.use('/api/landing', apiLimiter, createLandingRouter(() => startLandingWarmup(storage)));
+
+// Dev-only round-trip for views/DevCaptureTesting.tsx: lets a phone recording
+// a test clip hand its detection report to a PC on the same network. No
+// auth, writes to a scratch file on disk — never register this in production.
+if (NODE_ENV !== 'production') {
+  app.use('/api/dev', createDevCaptureRouter());
+}
 
 // Health check
 app.get('/api/health', (_req, res) => {

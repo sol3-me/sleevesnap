@@ -3,6 +3,7 @@ import { RootLayout } from './components/Layout';
 import { NotFoundRedirect } from './components/NotFoundRedirect';
 import { ArtistDetailView } from './views/ArtistDetailView';
 import { CollectionView } from './views/CollectionView';
+import { DevCaptureTesting } from './views/DevCaptureTesting';
 import { DiscoverView } from './views/DiscoverView';
 import { LabelDetailView } from './views/LabelDetailView';
 import { ScanView } from './views/ScanView';
@@ -94,6 +95,15 @@ const settingsRoute = createRoute({
   component: SettingsView,
 });
 
+// Dev-only harness for the auto-capture detection pipeline — never present
+// in production builds (import.meta.env.DEV is statically replaced by Vite,
+// so this branch is dead-code-eliminated there).
+const devCaptureTestRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/dev/capture-test',
+  component: DevCaptureTesting,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   discoverRoute,
@@ -101,6 +111,7 @@ const routeTree = rootRoute.addChildren([
   artistDetailRoute,
   labelDetailRoute,
   settingsRoute,
+  ...(import.meta.env.DEV ? [devCaptureTestRoute] : []),
 ]);
 
 export const router = createRouter({ routeTree });
